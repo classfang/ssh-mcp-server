@@ -9,7 +9,7 @@
   },
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "build": "tsc && chmod 755 build/index.js",
+    "build": "node scripts/build.js",
     "prepublishOnly": "npm run build"
   },
   "keywords": [
