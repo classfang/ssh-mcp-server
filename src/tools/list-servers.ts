@@ -16,7 +16,7 @@ export function registerListServersTool(server: McpServer): void {
         content: [
           {
             type: "text",
-            text: JSON.stringify(servers, null, 2)
+            text: JSON.stringify(servers)
           }
         ]
       };

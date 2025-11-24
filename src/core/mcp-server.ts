@@ -31,11 +31,11 @@ export class SshMcpServer {
    */
   public async run(): Promise<void> {
     // Initialize SSH configuration
-    const sshConfig = CommandLineParser.parseArgs();
-    this.sshManager.setConfig(sshConfig);
+    const parsedArgs = CommandLineParser.parseArgs();
+    this.sshManager.setConfig(parsedArgs.configs);
 
     // Security warning
-    const allConfigs = Object.values(sshConfig);
+    const allConfigs = Object.values(parsedArgs.configs);
     if (
       allConfigs.some(
         (c) => !c.commandWhitelist || c.commandWhitelist.length === 0
@@ -45,6 +45,20 @@ export class SshMcpServer {
         "WARNING: Running without a command whitelist is strongly discouraged. Please configure a whitelist to restrict the commands that can be executed.",
         "info"
       );
+    }
+
+    // Pre-connect to all servers if flag is set
+    if (parsedArgs.preConnect) {
+      Logger.log("Pre-connecting to all configured SSH servers...", "info");
+      try {
+        await this.sshManager.connectAll();
+        Logger.log("Successfully pre-connected to all SSH servers", "info");
+      } catch (error) {
+        Logger.log(
+          `Warning: Some SSH connections failed during pre-connect: ${(error as Error).message}`,
+          "error"
+        );
+      }
     }
 
     // Register tools

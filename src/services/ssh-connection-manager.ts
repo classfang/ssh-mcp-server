@@ -1,7 +1,8 @@
 import { Client, ClientChannel } from "ssh2";
 import { SocksClient } from "socks";
-import { SSHConfig, SshConnectionConfigMap } from "../models/types.js";
+import { SSHConfig, SshConnectionConfigMap, ServerStatus } from "../models/types.js";
 import { Logger } from "../utils/logger.js";
+import { collectSystemStatus } from "../utils/status-collector.js";
 import fs from "fs";
 import path from "path";
 import { SFTPWrapper } from "ssh2";
@@ -14,6 +15,7 @@ export class SSHConnectionManager {
   private clients: Map<string, Client> = new Map();
   private configs: SshConnectionConfigMap = {};
   private connected: Map<string, boolean> = new Map();
+  private statusCache: Map<string, ServerStatus> = new Map();
   private defaultName: string = "default";
 
   private constructor() {}
@@ -80,6 +82,28 @@ export class SSHConnectionManager {
         Logger.log(
           `Successfully connected to SSH server [${key}] ${config.host}:${config.port}`
         );
+        
+        // Collect system status after connection (non-blocking)
+        collectSystemStatus(client, key)
+          .then((status) => {
+            this.statusCache.set(key, status);
+            Logger.log(
+              `System status collected for [${key}]`,
+              "info"
+            );
+          })
+          .catch((error) => {
+            Logger.log(
+              `Failed to collect system status for [${key}]: ${(error as Error).message}`,
+              "error"
+            );
+            // Set basic status even if collection fails
+            this.statusCache.set(key, {
+              reachable: true,
+              lastUpdated: new Date().toISOString(),
+            });
+          });
+        
         resolve();
       });
       client.on("error", (err: Error) => {
@@ -441,15 +465,18 @@ export class SSHConnectionManager {
     port: number;
     username: string;
     connected: boolean;
+    status?: ServerStatus;
   }> {
     return Object.keys(this.configs).map((key) => {
       const config = this.configs[key];
+      const status = this.statusCache.get(key);
       return {
         name: key,
         host: config.host,
         port: config.port,
         username: config.username,
         connected: this.connected.get(key) === true,
+        status: status,
       };
     });
   }

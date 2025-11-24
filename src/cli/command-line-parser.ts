@@ -1,5 +1,5 @@
 import { parseArgs } from "node:util";
-import { SSHConfig, SshConnectionConfigMap } from "../models/types.js";
+import { SSHConfig, SshConnectionConfigMap, ParsedArgs } from "../models/types.js";
 
 /**
  * Command line argument parser class
@@ -8,7 +8,7 @@ export class CommandLineParser {
   /**
    * Parse command line arguments
    */
-  public static parseArgs(): SshConnectionConfigMap {
+  public static parseArgs(): ParsedArgs {
     const { values, positionals } = parseArgs({
       args: process.argv.slice(2),
       options: {
@@ -23,6 +23,7 @@ export class CommandLineParser {
         whitelist: { type: "string", short: "W" },
         blacklist: { type: "string", short: "B" },
         socksProxy: { type: "string", short: "s" },
+        "pre-connect": { type: "boolean" },
       },
       allowPositionals: true,
     });
@@ -126,6 +127,9 @@ export class CommandLineParser {
       };
     }
 
-    return configMap;
+    return {
+      configs: configMap,
+      preConnect: values["pre-connect"] === true,
+    };
   }
 }
