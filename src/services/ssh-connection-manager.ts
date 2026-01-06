@@ -82,29 +82,34 @@ export class SSHConnectionManager {
         Logger.log(
           `Successfully connected to SSH server [${key}] ${config.host}:${config.port}`
         );
-        
-        // Collect system status after connection (non-blocking)
-        collectSystemStatus(client, key)
-          .then((status) => {
-            this.statusCache.set(key, status);
-            Logger.log(
-              `System status collected for [${key}]`,
-              "info"
-            );
-          })
-          .catch((error) => {
-            Logger.log(
-              `Failed to collect system status for [${key}]: ${(error as Error).message}`,
-              "error"
-            );
-            // Set basic status even if collection fails
-            this.statusCache.set(key, {
-              reachable: true,
-              lastUpdated: new Date().toISOString(),
-            });
-          });
-        
+
+        // 先 resolve，让用户命令可以立即执行
         resolve();
+
+        // 延迟执行系统状态收集，避免与用户的第一个命令竞争 SSH 通道
+        // 这修复了首次连接后第一个命令失败的竞态条件问题
+        // See: https://github.com/classfang/ssh-mcp-server/issues/XX
+        setTimeout(() => {
+          collectSystemStatus(client, key)
+            .then((status) => {
+              this.statusCache.set(key, status);
+              Logger.log(
+                `System status collected for [${key}]`,
+                "info"
+              );
+            })
+            .catch((error) => {
+              Logger.log(
+                `Failed to collect system status for [${key}]: ${(error as Error).message}`,
+                "error"
+              );
+              // Set basic status even if collection fails
+              this.statusCache.set(key, {
+                reachable: true,
+                lastUpdated: new Date().toISOString(),
+              });
+            });
+        }, 1000); // 延迟 1 秒，确保用户命令有足够的时间窗口
       });
       client.on("error", (err: Error) => {
         this.connected.set(key, false);
