@@ -62,7 +62,7 @@ NPM: [https://www.npmjs.com/package/@fangjunjie/ssh-mcp-server](https://www.npmj
 ```json
 {
   "mcpServers": {
-    "ssh-mpc-server": {
+    "ssh-mcp-server": {
       "command": "npx",
       "args": [
         "-y",
@@ -82,7 +82,7 @@ NPM: [https://www.npmjs.com/package/@fangjunjie/ssh-mcp-server](https://www.npmj
 ```json
 {
   "mcpServers": {
-    "ssh-mpc-server": {
+    "ssh-mcp-server": {
       "command": "npx",
       "args": [
         "-y",
@@ -102,7 +102,7 @@ NPM: [https://www.npmjs.com/package/@fangjunjie/ssh-mcp-server](https://www.npmj
 ```json
 {
   "mcpServers": {
-    "ssh-mpc-server": {
+    "ssh-mcp-server": {
       "command": "npx",
       "args": [
         "-y",
@@ -123,7 +123,7 @@ NPM: [https://www.npmjs.com/package/@fangjunjie/ssh-mcp-server](https://www.npmj
 ```json
 {
   "mcpServers": {
-    "ssh-mpc-server": {
+    "ssh-mcp-server": {
       "command": "npx",
       "args": [
         "-y",
@@ -148,7 +148,7 @@ NPM: [https://www.npmjs.com/package/@fangjunjie/ssh-mcp-server](https://www.npmj
 ```json
 {
   "mcpServers": {
-    "ssh-mpc-server": {
+    "ssh-mcp-server": {
       "command": "npx",
       "args": [
         "-y",
@@ -169,7 +169,7 @@ NPM: [https://www.npmjs.com/package/@fangjunjie/ssh-mcp-server](https://www.npmj
 ```json
 {
   "mcpServers": {
-    "ssh-mpc-server": {
+    "ssh-mcp-server": {
       "command": "npx",
       "args": [
         "-y",
