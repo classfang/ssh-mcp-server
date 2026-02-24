@@ -301,8 +301,6 @@ export class SSHConnectionManager {
       // Execute command via SSH exec
       client.exec(
         cmdString,
-        // allocate a pseudo-tty
-        { pty: true },
         (err: Error | undefined, stream: ClientChannel) => {
           // Handle immediate execution errors
           if (err) {
