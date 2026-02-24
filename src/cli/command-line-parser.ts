@@ -1,5 +1,6 @@
 import { parseArgs } from "node:util";
 import { SSHConfig, SshConnectionConfigMap, ParsedArgs } from "../models/types.js";
+import { lookupSshConfig } from "../utils/ssh-config-parser.js";
 import fs from "fs";
 import path from "path";
 
@@ -26,6 +27,7 @@ export class CommandLineParser {
         whitelist: { type: "string", short: "W" },
         blacklist: { type: "string", short: "B" },
         socksProxy: { type: "string", short: "s" },
+        "ssh-config-file": { type: "string" },
         "pre-connect": { type: "boolean" },
       },
       allowPositionals: true,
@@ -107,10 +109,16 @@ export class CommandLineParser {
     // Priority 3: Compatible with single connection legacy parameters
     if (Object.keys(configMap).length === 0) {
       const host = values.host || positionals[0];
-      const portStr = values.port || positionals[1];
-      const username = values.username || positionals[2];
+
+      // Look up ~/.ssh/config for host alias to fill in missing parameters
+      const sshConfigEntry = host
+        ? lookupSshConfig(host, values["ssh-config-file"])
+        : null;
+
+      const portStr = values.port || positionals[1] || (sshConfigEntry?.port?.toString());
+      const username = values.username || positionals[2] || sshConfigEntry?.username;
       const password = values.password || positionals[3];
-      const privateKey = values.privateKey;
+      const privateKey = values.privateKey || sshConfigEntry?.privateKey;
       const passphrase = values.passphrase;
       const whitelist = values.whitelist;
       const blacklist = values.blacklist;
@@ -126,9 +134,12 @@ export class CommandLineParser {
         throw new Error("Port must be a valid number");
       }
 
+      // Use the actual hostname from SSH config if available
+      const actualHost = sshConfigEntry?.host || host;
+
       configMap["default"] = {
         name: "default",
-        host,
+        host: actualHost,
         port,
         username,
         password,

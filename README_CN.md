@@ -48,7 +48,8 @@ NPM: [https://www.npmjs.com/package/@fangjunjie/ssh-mcp-server](https://www.npmj
 选项:
   --config-file       JSON 配置文件路径（推荐用于多服务器配置）
   --ssh               SSH 连接配置（可以是 JSON 字符串或旧格式）
-  -h, --host          SSH 服务器主机地址
+  --ssh-config-file   SSH 配置文件路径（默认：~/.ssh/config）
+  -h, --host          SSH 服务器主机地址（支持 ~/.ssh/config 中的主机别名）
   -p, --port          SSH 服务器端口
   -u, --username      SSH 用户名
   -w, --password      SSH 密码
@@ -94,6 +95,43 @@ NPM: [https://www.npmjs.com/package/@fangjunjie/ssh-mcp-server](https://www.npmj
         "--port", "22",
         "--username", "root",
         "--privateKey", "~/.ssh/id_rsa"
+      ]
+    }
+  }
+}
+```
+
+#### 🔑 使用 ~/.ssh/config
+
+如果你已经在 `~/.ssh/config` 中配置了主机，可以直接使用主机别名——端口、用户名和私钥路径会自动从 SSH 配置文件中读取：
+
+```json
+{
+  "mcpServers": {
+    "ssh-mcp-server": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@fangjunjie/ssh-mcp-server",
+        "--host", "my-server"
+      ]
+    }
+  }
+}
+```
+
+命令行参数优先于 SSH 配置文件中的值。你也可以指定自定义的 SSH 配置文件路径：
+
+```json
+{
+  "mcpServers": {
+    "ssh-mcp-server": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@fangjunjie/ssh-mcp-server",
+        "--host", "my-server",
+        "--ssh-config-file", "/path/to/custom/ssh_config"
       ]
     }
   }

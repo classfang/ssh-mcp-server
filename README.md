@@ -56,7 +56,8 @@ NPM: [https://www.npmjs.com/package/@fangjunjie/ssh-mcp-server](https://www.npmj
 Options:
   --config-file       JSON configuration file path (recommended for multiple servers)
   --ssh               SSH connection configuration (can be JSON string or legacy format)
-  -h, --host          SSH server host address
+  --ssh-config-file   Path to SSH config file (default: ~/.ssh/config)
+  -h, --host          SSH server host address (supports ~/.ssh/config host aliases)
   -p, --port          SSH server port
   -u, --username      SSH username
   -w, --password      SSH password
@@ -103,6 +104,43 @@ Options:
         "--port", "22",
         "--username", "root",
         "--privateKey", "~/.ssh/id_rsa"
+      ]
+    }
+  }
+}
+```
+
+#### 🔑 Using ~/.ssh/config
+
+If you have configured hosts in `~/.ssh/config`, you can simply use the host alias — port, username, and private key will be automatically read from the SSH config file:
+
+```json
+{
+  "mcpServers": {
+    "ssh-mcp-server": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@fangjunjie/ssh-mcp-server",
+        "--host", "my-server"
+      ]
+    }
+  }
+}
+```
+
+Command-line parameters take precedence over SSH config values. You can also specify a custom SSH config file path:
+
+```json
+{
+  "mcpServers": {
+    "ssh-mcp-server": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@fangjunjie/ssh-mcp-server",
+        "--host", "my-server",
+        "--ssh-config-file", "/path/to/custom/ssh_config"
       ]
     }
   }
