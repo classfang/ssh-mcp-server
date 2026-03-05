@@ -65,6 +65,7 @@ Options:
   -W, --whitelist     Command whitelist, comma-separated regular expressions
   -B, --blacklist     Command blacklist, comma-separated regular expressions
   -s, --socksProxy    SOCKS proxy server address (e.g., socks://user:password@host:port)
+  --pty               Allocate pseudo-tty for command execution (default: true)
   --pre-connect       Pre-connect to all configured SSH servers on startup
 
 ```

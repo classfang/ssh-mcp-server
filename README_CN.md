@@ -57,6 +57,7 @@ NPM: [https://www.npmjs.com/package/@fangjunjie/ssh-mcp-server](https://www.npmj
   -W, --whitelist     命令白名单，以逗号分隔的正则表达式
   -B, --blacklist     命令黑名单，以逗号分隔的正则表达式
   -s, --socksProxy    SOCKS 代理地址 (e.g., socks://user:password@host:port)
+  --pty               为命令执行分配伪终端 (默认: true)
   --pre-connect       启动时预连接所有配置的 SSH 服务器
 ```
 
