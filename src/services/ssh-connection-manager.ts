@@ -169,7 +169,10 @@ export class SSHConnectionManager {
           );
         }
       }
-      if (config.privateKey) {
+      if (config.agent) {
+        sshConfig.agent = config.agent;
+        Logger.log(`Using SSH agent authentication for [${key}]: ${config.agent}`, "info");
+      } else if (config.privateKey) {
         try {
           sshConfig.privateKey = fs.readFileSync(config.privateKey, "utf8");
           if (config.passphrase) {
@@ -194,7 +197,7 @@ export class SSHConnectionManager {
       } else {
         return reject(
           new Error(
-            `No valid authentication method provided for [${key}] (password or private key)`,
+            `No valid authentication method provided for [${key}] (agent, password or private key)`,
           ),
         );
       }

@@ -9,6 +9,7 @@ export interface SSHConfig {
   password?: string;
   privateKey?: string;
   passphrase?: string;
+  agent?: string; // SSH agent for authentication (use 'pageant' for Windows Pageant)
   commandWhitelist?: string[]; // Command whitelist (array of regex strings)
   commandBlacklist?: string[]; // Command blacklist (array of regex strings)
   socksProxy?: string; // SOCKS proxy URL, e.g. 'socks://user:pass@host:port'
