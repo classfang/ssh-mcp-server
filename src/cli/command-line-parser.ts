@@ -25,6 +25,7 @@ export class CommandLineParser {
         password: { type: "string", short: "w" },
         privateKey: { type: "string", short: "k" },
         passphrase: { type: "string", short: "P" },
+        agent: { type: "string", short: "a" },
         whitelist: { type: "string", short: "W" },
         blacklist: { type: "string", short: "B" },
         socksProxy: { type: "string", short: "s" },
@@ -134,9 +135,9 @@ export class CommandLineParser {
       // 实际连接地址：优先使用 SSH config 的 HostName
       const actualHost = sshConfigEntry?.hostName || host;
 
-      if (!actualHost || !portStr || !username || (!password && !privateKey)) {
+      if (!actualHost || !portStr || !username || (!password && !privateKey && !values.agent)) {
         throw new Error(
-          "Missing required parameters, need to provide host, port, username and password or private key"
+          "Missing required parameters, need to provide host, port, username and password, private key or agent"
         );
       }
 
@@ -153,6 +154,7 @@ export class CommandLineParser {
         password,
         privateKey,
         passphrase,
+        agent: values.agent,
         socksProxy: values.socksProxy,
         pty: pty !== undefined ? pty : undefined,
         commandWhitelist: whitelist
@@ -211,6 +213,7 @@ export class CommandLineParser {
       password: conf.password,
       privateKey: conf.privateKey,
       passphrase: conf.passphrase,
+      agent: conf.agent,
       socksProxy: conf.socksProxy,
       pty: conf.pty !== undefined ? conf.pty === "true" || conf.pty === true : undefined,
       commandWhitelist: conf.whitelist
@@ -249,6 +252,7 @@ export class CommandLineParser {
       password: config.password,
       privateKey: config.privateKey,
       passphrase: config.passphrase,
+      agent: config.agent,
       socksProxy: config.socksProxy,
       pty: config.pty !== undefined ? Boolean(config.pty) : undefined,
       commandWhitelist: Array.isArray(config.commandWhitelist)
