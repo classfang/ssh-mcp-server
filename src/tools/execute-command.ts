@@ -15,6 +15,7 @@ export function registerExecuteCommandTool(server: McpServer): void {
       description: "Execute command on connected server and get output result",
       inputSchema: {
         cmdString: z.string().describe("Command to execute"),
+        directory: z.string().optional().describe("Working directory for command execution"),
         connectionName: z
           .string()
           .optional()
@@ -27,10 +28,11 @@ export function registerExecuteCommandTool(server: McpServer): void {
           ),
       },
     },
-    async ({ cmdString, connectionName, timeout }) => {
+    async ({ cmdString, directory, connectionName, timeout }) => {
       try {
         const result = await sshManager.executeCommand(
           cmdString,
+          directory,
           connectionName,
           {
             timeout,

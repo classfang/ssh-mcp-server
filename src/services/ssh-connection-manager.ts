@@ -300,6 +300,7 @@ export class SSHConnectionManager {
    */
   public async executeCommand(
     cmdString: string,
+    directory?: string,
     name?: string,
     options: { timeout?: number } = {},
   ): Promise<string> {
@@ -314,6 +315,10 @@ export class SSHConnectionManager {
 
     // Get configuration to check PTY setting
     const config = this.getConfig(name);
+
+    const commandToRun = directory
+      ? `cd -- ${JSON.stringify(directory)} && ${cmdString}`
+      : cmdString;
 
     // Configure execution options with defaults
     const timeout = options.timeout || 30000; // Default 30 seconds timeout
@@ -331,7 +336,7 @@ export class SSHConnectionManager {
 
       // Execute command via SSH exec
       client.exec(
-        cmdString,
+        commandToRun,
         // allocate a pseudo-tty (default: true)
         { pty: config.pty !== undefined ? config.pty : true },
         (err: Error | undefined, stream: ClientChannel) => {
