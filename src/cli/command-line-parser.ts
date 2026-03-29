@@ -127,7 +127,7 @@ export class CommandLineParser {
       const username = values.username || positionals[2] || sshConfigEntry?.user;
       const password = values.password || positionals[3];
       const privateKey = values.privateKey || sshConfigEntry?.identityFile;
-      const passphrase = values.passphrase;
+      const passphrase = values.passphrase || process.env.SSH_MCP_PASSPHRASE;
       const whitelist = values.whitelist;
       const blacklist = values.blacklist;
       const pty = values.pty;
@@ -212,7 +212,7 @@ export class CommandLineParser {
       username: conf.user,
       password: conf.password,
       privateKey: conf.privateKey,
-      passphrase: conf.passphrase,
+      passphrase: conf.passphrase || process.env.SSH_MCP_PASSPHRASE,
       agent: conf.agent,
       socksProxy: conf.socksProxy,
       pty: conf.pty !== undefined ? conf.pty === "true" || conf.pty === true : undefined,
@@ -251,7 +251,7 @@ export class CommandLineParser {
       username: config.username || config.user,
       password: config.password,
       privateKey: config.privateKey,
-      passphrase: config.passphrase,
+      passphrase: config.passphrase || process.env.SSH_MCP_PASSPHRASE,
       agent: config.agent,
       socksProxy: config.socksProxy,
       pty: config.pty !== undefined ? Boolean(config.pty) : undefined,
