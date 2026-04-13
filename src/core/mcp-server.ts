@@ -13,6 +13,7 @@ export class SshMcpServer {
   private server: McpServer;
   private sshManager: SSHConnectionManager;
   private shutdownHandlersRegistered = false;
+  private shutdownPromise?: Promise<void>;
 
   constructor() {
     this.server = new McpServer(SERVER_CONFIG);
@@ -27,19 +28,45 @@ export class SshMcpServer {
     registerAllTools(this.server);
   }
 
+  private async shutdown(reason: string, exitCode?: number): Promise<void> {
+    if (!this.shutdownPromise) {
+      this.shutdownPromise = (async () => {
+        Logger.log(`Received ${reason}, shutting down SSH MCP server...`, "info");
+
+        this.sshManager.disconnect();
+
+        try {
+          await this.server.close();
+        } catch (error) {
+          Logger.log(
+            `Failed to close MCP server cleanly: ${(error as Error).message}`,
+            "error",
+          );
+        }
+      })();
+    }
+
+    await this.shutdownPromise;
+
+    if (exitCode !== undefined) {
+      process.exit(exitCode);
+    }
+  }
+
   private registerShutdownHandlers(): void {
     if (this.shutdownHandlersRegistered) {
       return;
     }
 
-    const handleShutdown = (signal: string) => {
-      Logger.log(`Received ${signal}, disconnecting SSH clients...`, "info");
-      this.sshManager.disconnect();
+    const handleSignal = (signal: NodeJS.Signals) => {
+      void this.shutdown(signal, 0);
     };
 
-    process.once("SIGINT", () => handleShutdown("SIGINT"));
-    process.once("SIGTERM", () => handleShutdown("SIGTERM"));
-    process.once("beforeExit", () => handleShutdown("beforeExit"));
+    process.once("SIGINT", handleSignal);
+    process.once("SIGTERM", handleSignal);
+    process.stdin.once("end", () => void this.shutdown("stdin end", 0));
+    process.stdin.once("close", () => void this.shutdown("stdin close", 0));
+    process.once("beforeExit", () => void this.shutdown("beforeExit"));
 
     this.shutdownHandlersRegistered = true;
   }
