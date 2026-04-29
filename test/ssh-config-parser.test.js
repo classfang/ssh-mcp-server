@@ -14,8 +14,10 @@ describe('SSH Config Parser', () => {
   let testConfigPath;
   let testConfigWithIncludePath;
   let includedConfigPath;
+  let originalHome;
 
   before(() => {
+    originalHome = process.env.HOME;
     if (!fs.existsSync(fixturesDir)) {
       fs.mkdirSync(fixturesDir, { recursive: true });
     }
@@ -72,6 +74,7 @@ describe('SSH Config Parser', () => {
   });
 
   after(() => {
+    process.env.HOME = originalHome;
     try {
       fs.unlinkSync(testConfigPath);
       fs.unlinkSync(testConfigWithIncludePath);
@@ -159,8 +162,16 @@ describe('SSH Config Parser', () => {
 
   describe('边界情况', () => {
     it('默认配置文件不存在时应返回 null', () => {
-      const config = lookupSshConfig('any-host');
-      assert.strictEqual(config, null);
+      const fakeHome = fs.mkdtempSync(path.join(fixturesDir, 'fake-home-'));
+      process.env.HOME = fakeHome;
+
+      try {
+        const config = lookupSshConfig('any-host');
+        assert.strictEqual(config, null);
+      } finally {
+        process.env.HOME = originalHome;
+        fs.rmSync(fakeHome, { recursive: true, force: true });
+      }
     });
 
     it('显式指定的配置文件不存在时应抛出错误', () => {
