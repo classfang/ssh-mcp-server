@@ -119,7 +119,9 @@ Host testhost
         host: '1.2.3.4',
         port: 22,
         username: 'testuser',
-        password: 'testpass'
+        password: 'testpass',
+        transportMode: 'shell',
+        shellReadyTimeoutMs: 15000
       });
 
       process.argv = ['node', 'test', '--ssh', sshJson];
@@ -127,6 +129,8 @@ Host testhost
 
       assert.strictEqual(result.configs.test.host, '1.2.3.4');
       assert.strictEqual(result.configs.test.username, 'testuser');
+      assert.strictEqual(result.configs.test.transportMode, 'shell');
+      assert.strictEqual(result.configs.test.shellReadyTimeoutMs, 15000);
     });
 
     it('应该正确解析旧格式的 --ssh 参数', () => {
@@ -233,6 +237,31 @@ Host testhost
   });
 
   describe('其他选项', () => {
+    it('默认 transportMode 应为 exec', () => {
+      process.argv = ['node', 'test', '--host', '1.2.3.4', '--port', '22', '--username', 'user', '--password', 'pass'];
+      const result = CommandLineParser.parseArgs();
+
+      assert.strictEqual(result.configs.default.transportMode, 'exec');
+      assert.strictEqual(result.configs.default.shellReadyTimeoutMs, 10000);
+    });
+
+    it('应该正确解析 shell transport 相关选项', () => {
+      process.argv = [
+        'node',
+        'test',
+        '--host', '1.2.3.4',
+        '--port', '22',
+        '--username', 'user',
+        '--password', 'pass',
+        '--transport-mode', 'shell',
+        '--shell-ready-timeout', '15000'
+      ];
+      const result = CommandLineParser.parseArgs();
+
+      assert.strictEqual(result.configs.default.transportMode, 'shell');
+      assert.strictEqual(result.configs.default.shellReadyTimeoutMs, 15000);
+    });
+
     it('应该正确解析 --pty 选项', () => {
       process.argv = ['node', 'test', '--host', '1.2.3.4', '--port', '22', '--username', 'user', '--password', 'pass', '--pty'];
       const result = CommandLineParser.parseArgs();

@@ -55,6 +55,30 @@ describe('集成测试', () => {
       assert.strictEqual(config.username, 'testuser');
     });
 
+    it('应该能够从命令行参数生成 shell transport 配置', () => {
+      process.argv = [
+        'node',
+        'test',
+        '--host', '192.168.1.110',
+        '--port', '22',
+        '--username', 'shelluser',
+        '--password', 'shellpass',
+        '--transport-mode', 'shell',
+        '--shell-ready-timeout', '18000'
+      ];
+
+      const result = CommandLineParser.parseArgs();
+      assert.strictEqual(result.configs.default.transportMode, 'shell');
+      assert.strictEqual(result.configs.default.shellReadyTimeoutMs, 18000);
+
+      const manager = SSHConnectionManager.getInstance();
+      manager.setConfig(result.configs);
+
+      const config = manager.getConfig('default');
+      assert.strictEqual(config.transportMode, 'shell');
+      assert.strictEqual(config.shellReadyTimeoutMs, 18000);
+    });
+
     it('应该能够从 SSH config 创建完整配置', () => {
       const tempSshConfig = path.join(fixturesDir, 'integration-ssh-config');
       fs.writeFileSync(tempSshConfig, [
@@ -135,6 +159,37 @@ describe('集成测试', () => {
         fs.unlinkSync(tempConfig);
       }
     });
+
+    it('应该能够从配置文件生成 shell transport 配置', () => {
+      const tempConfig = path.join(fixturesDir, 'shell-server-config.json');
+      fs.writeFileSync(tempConfig, JSON.stringify({
+        shellbox: {
+          host: '192.168.1.20',
+          port: 22,
+          username: 'shelluser',
+          password: 'shellpass',
+          transportMode: 'shell',
+          shellReadyTimeoutMs: 12000
+        }
+      }));
+
+      try {
+        process.argv = ['node', 'test', '--config-file', tempConfig];
+
+        const result = CommandLineParser.parseArgs();
+        assert.strictEqual(result.configs.shellbox.transportMode, 'shell');
+        assert.strictEqual(result.configs.shellbox.shellReadyTimeoutMs, 12000);
+
+        const manager = SSHConnectionManager.getInstance();
+        manager.setConfig(result.configs);
+
+        const config = manager.getConfig('shellbox');
+        assert.strictEqual(config.transportMode, 'shell');
+        assert.strictEqual(config.shellReadyTimeoutMs, 12000);
+      } finally {
+        fs.unlinkSync(tempConfig);
+      }
+    });
   });
 
   describe('错误处理', () => {
@@ -179,10 +234,24 @@ describe('集成测试', () => {
     });
 
     it('应该正确处理缺少认证参数的情况', () => {
-      process.argv = ['node', 'test', '--host', '1.2.3.4', '--port', '22', '--username', 'user'];
-      assert.throws(() => {
-        CommandLineParser.parseArgs();
-      }, /Missing required parameters/);
+      const emptySshConfig = path.join(fixturesDir, 'empty-ssh-config');
+      fs.writeFileSync(emptySshConfig, '');
+
+      try {
+        process.argv = [
+          'node',
+          'test',
+          '--host', '1.2.3.4',
+          '--port', '22',
+          '--username', 'user',
+          '--ssh-config-file', emptySshConfig
+        ];
+        assert.throws(() => {
+          CommandLineParser.parseArgs();
+        }, /Missing required parameters/);
+      } finally {
+        fs.unlinkSync(emptySshConfig);
+      }
     });
 
     it('应该正确处理无效的端口号', () => {
