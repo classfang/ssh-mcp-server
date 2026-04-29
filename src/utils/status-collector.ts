@@ -1,12 +1,16 @@
-import { Client } from "ssh2";
 import { ServerStatus } from "../models/types.js";
 import { Logger } from "./logger.js";
+
+type StatusCommandRunner = (
+  command: string,
+  connectionName: string,
+) => Promise<string>;
 
 /**
  * Collect system status information from remote server
  */
 export async function collectSystemStatus(
-  client: Client,
+  runCommand: StatusCommandRunner,
   connectionName: string
 ): Promise<ServerStatus> {
   const status: ServerStatus = {
@@ -26,7 +30,10 @@ export async function collectSystemStatus(
         while (nextIndex < commands.length) {
           const currentIndex = nextIndex++;
           try {
-            results[currentIndex] = await execCommand(commands[currentIndex]);
+            results[currentIndex] = await runCommand(
+              commands[currentIndex],
+              connectionName,
+            );
           } catch {
             results[currentIndex] = "";
           }
@@ -40,34 +47,6 @@ export async function collectSystemStatus(
 
       return results;
     };
-
-    // Helper function to execute command and parse output
-    const execCommand = (command: string): Promise<string> => {
-      return new Promise((resolve, reject) => {
-        client.exec(command, (err, stream) => {
-          if (err) {
-            reject(err);
-            return;
-          }
-          let data = "";
-          stream.on("data", (chunk: Buffer) => {
-            data += chunk.toString();
-          });
-          stream.on("close", (code: number) => {
-            if (code === 0) {
-              resolve(data.trim());
-            } else {
-              reject(new Error(`Command exited with code ${code}`));
-            }
-          });
-          stream.stderr.on("data", (chunk: Buffer) => {
-            // Collect stderr but don't fail on it
-            data += chunk.toString();
-          });
-        });
-      });
-    };
-
     // Collect all status information in parallel where possible
     const commands = {
       hostname: "hostname",

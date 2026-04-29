@@ -8,6 +8,9 @@ import { lookupSshConfig } from "../utils/ssh-config-parser.js";
  * Command line argument parser class
  */
 export class CommandLineParser {
+  private static readonly DEFAULT_TRANSPORT_MODE: SSHConfig["transportMode"] = "exec";
+  private static readonly DEFAULT_SHELL_READY_TIMEOUT_MS = 10000;
+
   private static parseBoolean(value: unknown): boolean | undefined {
     if (value === undefined) {
       return undefined;
@@ -25,6 +28,40 @@ export class CommandLineParser {
       }
     }
     return Boolean(value);
+  }
+
+  private static parseTransportMode(
+    value: unknown,
+  ): SSHConfig["transportMode"] | undefined {
+    if (value === undefined || value === null || value === "") {
+      return undefined;
+    }
+
+    if (value === "exec" || value === "shell") {
+      return value;
+    }
+
+    throw new Error(
+      `transportMode must be either 'exec' or 'shell', got: ${String(value)}`,
+    );
+  }
+
+  private static parseTimeout(
+    value: unknown,
+    fieldName: string,
+  ): number | undefined {
+    if (value === undefined || value === null || value === "") {
+      return undefined;
+    }
+
+    const parsed =
+      typeof value === "number" ? value : parseInt(String(value), 10);
+
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      throw new Error(`${fieldName} must be a positive number, got: ${String(value)}`);
+    }
+
+    return parsed;
   }
 
   /**
@@ -49,6 +86,8 @@ export class CommandLineParser {
         blacklist: { type: "string", short: "B" },
         socksProxy: { type: "string", short: "s" },
         "allowed-local-paths": { type: "string" },
+        "transport-mode": { type: "string" },
+        "shell-ready-timeout": { type: "string" },
         pty: { type: "boolean" },
         "pre-connect": { type: "boolean" },
       },
@@ -167,7 +206,7 @@ export class CommandLineParser {
         throw new Error("Port must be a valid number");
       }
 
-      configMap["default"] = {
+      configMap["default"] = this.normalizeConfig({
         name: "default",
         host: actualHost,
         port,
@@ -178,6 +217,8 @@ export class CommandLineParser {
         agent: values.agent,
         socksProxy: values.socksProxy,
         pty: pty !== undefined ? pty : undefined,
+        transportMode: values["transport-mode"],
+        shellReadyTimeoutMs: values["shell-ready-timeout"],
         commandWhitelist: whitelist
           ? whitelist
               .split(",")
@@ -196,7 +237,7 @@ export class CommandLineParser {
               .map((allowedPath) => path.resolve(allowedPath.trim()))
               .filter(Boolean)
           : undefined,
-      };
+      });
     }
 
     return {
@@ -232,36 +273,7 @@ export class CommandLineParser {
       );
     }
     
-    return {
-      name: conf.name,
-      host: conf.host,
-      port,
-      username: conf.user,
-      password: conf.password,
-      privateKey: conf.privateKey,
-      passphrase: conf.passphrase || process.env.SSH_MCP_PASSPHRASE,
-      agent: conf.agent,
-      socksProxy: conf.socksProxy,
-      pty: this.parseBoolean(conf.pty),
-      commandWhitelist: conf.whitelist
-        ? conf.whitelist
-            .split("|")
-            .map((s: string) => s.trim())
-            .filter(Boolean)
-        : undefined,
-      commandBlacklist: conf.blacklist
-        ? conf.blacklist
-            .split("|")
-            .map((s: string) => s.trim())
-            .filter(Boolean)
-        : undefined,
-      allowedLocalPaths: conf.allowedLocalPaths
-        ? String(conf.allowedLocalPaths)
-            .split("|")
-            .map((allowedPath: string) => path.resolve(allowedPath.trim()))
-            .filter(Boolean)
-        : undefined,
-    };
+    return this.normalizeConfig(conf);
   }
 
   /**
@@ -288,6 +300,18 @@ export class CommandLineParser {
       agent: config.agent,
       socksProxy: config.socksProxy,
       pty: this.parseBoolean(config.pty),
+      transportMode:
+        this.parseTransportMode(config.transportMode) ||
+        this.DEFAULT_TRANSPORT_MODE,
+      shellReadyTimeoutMs:
+        this.parseTimeout(
+          config.shellReadyTimeoutMs,
+          "shellReadyTimeoutMs",
+        ) || this.DEFAULT_SHELL_READY_TIMEOUT_MS,
+      shellCommandTimeoutMs: this.parseTimeout(
+        config.shellCommandTimeoutMs,
+        "shellCommandTimeoutMs",
+      ),
       commandWhitelist: Array.isArray(config.commandWhitelist)
         ? config.commandWhitelist
         : config.whitelist

@@ -8,6 +8,7 @@ export type ToolErrorCode =
   | "LOCAL_FILE_READ_FAILED"
   | "LOCAL_FILE_WRITE_FAILED"
   | "SFTP_ERROR"
+  | "UNSUPPORTED_IN_SHELL_MODE"
   | "UNKNOWN_ERROR";
 
 export class ToolError extends Error {

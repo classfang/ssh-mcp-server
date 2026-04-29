@@ -15,6 +15,9 @@ export interface SSHConfig {
   socksProxy?: string; // SOCKS proxy URL, e.g. 'socks://user:pass@host:port'
   pty?: boolean; // Allocate pseudo-tty for command execution, default: true
   allowedLocalPaths?: string[]; // Allowed local paths for upload/download
+  transportMode?: "exec" | "shell"; // SSH transport mode, default: exec
+  shellReadyTimeoutMs?: number; // Shell readiness probe timeout, default: 10000ms
+  shellCommandTimeoutMs?: number; // Shell command timeout override, default: 30000ms
 }
 
 /**
