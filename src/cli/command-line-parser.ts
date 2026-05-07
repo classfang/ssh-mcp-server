@@ -86,6 +86,7 @@ export class CommandLineParser {
         blacklist: { type: "string", short: "B" },
         socksProxy: { type: "string", short: "s" },
         "allowed-local-paths": { type: "string" },
+        "allowed-remote-paths": { type: "string" },
         "transport-mode": { type: "string" },
         "shell-ready-timeout": { type: "string" },
         pty: { type: "boolean" },
@@ -190,6 +191,7 @@ export class CommandLineParser {
       const whitelist = values.whitelist;
       const blacklist = values.blacklist;
       const allowedLocalPaths = values["allowed-local-paths"];
+      const allowedRemotePaths = values["allowed-remote-paths"];
       const pty = values.pty;
 
       // 实际连接地址：优先使用 SSH config 的 HostName
@@ -235,6 +237,12 @@ export class CommandLineParser {
           ? allowedLocalPaths
               .split(",")
               .map((allowedPath) => path.resolve(allowedPath.trim()))
+              .filter(Boolean)
+          : undefined,
+        allowedRemotePaths: allowedRemotePaths
+          ? allowedRemotePaths
+              .split(",")
+              .map((allowedPath) => allowedPath.trim())
               .filter(Boolean)
           : undefined,
       });
@@ -335,6 +343,35 @@ export class CommandLineParser {
               .map((allowedPath: string) => path.resolve(allowedPath.trim()))
               .filter(Boolean)
           : undefined,
+      allowedRemotePaths: Array.isArray(config.allowedRemotePaths)
+        ? config.allowedRemotePaths
+            .map((allowedPath: unknown) =>
+              this.normalizeRemotePath(String(allowedPath)),
+            )
+        : typeof config.allowedRemotePaths === "string"
+          ? config.allowedRemotePaths
+              .split("|")
+              .map((allowedPath: string) =>
+                this.normalizeRemotePath(allowedPath.trim()),
+              )
+              .filter(Boolean)
+          : undefined,
     };
+  }
+
+  private static normalizeRemotePath(remotePath: string): string {
+    if (!remotePath) {
+      return "";
+    }
+    if (!path.posix.isAbsolute(remotePath)) {
+      throw new Error(
+        `allowedRemotePaths entries must be absolute POSIX paths, got: ${remotePath}`,
+      );
+    }
+    const normalized = path.posix.normalize(remotePath);
+    if (normalized.length > 1 && normalized.endsWith("/")) {
+      return normalized.slice(0, -1);
+    }
+    return normalized;
   }
 }

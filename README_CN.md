@@ -63,6 +63,7 @@ NPM: [https://www.npmjs.com/package/@fangjunjie/ssh-mcp-server](https://www.npmj
   -B, --blacklist     命令黑名单,以逗号分隔的正则表达式
   -s, --socksProxy    SOCKS 代理地址 (e.g., socks://user:password@host:port)
   --allowed-local-paths upload/download 允许访问的额外本地路径，逗号分隔
+  --allowed-remote-paths SFTP upload/download 允许访问的远端路径（POSIX 绝对路径），逗号分隔
   --transport-mode    SSH transport 模式: exec 或 shell（默认: exec）
   --shell-ready-timeout shell 就绪探测超时，单位毫秒（默认: 10000）
   --pty               为命令执行分配伪终端 (默认: true)
@@ -483,6 +484,7 @@ npx @fangjunjie/ssh-mcp-server \
 - **拒绝服务攻击 (DoS)**：服务器没有内置的速率限制。攻击者可能通过向服务器发送大量连接请求或大文件传输来发起 DoS 攻击。建议在具有速率限制功能的防火墙或反向代理后面运行服务器。
 - **路径遍历**：服务器内置了对本地文件系统路径遍历攻击的保护。但是，仍然需要注意在 `upload` 和 `download` 命令中使用的路径。
 - **本地传输范围**：默认仅允许访问当前工作目录。只有在明确可信时，才建议通过 `--allowed-local-paths` 或配置文件中的 `allowedLocalPaths` 放宽范围。
+- **远端传输范围**：SFTP upload/download 仅接受绝对 POSIX 路径。未配置 `allowedRemotePaths`（或 `--allowed-remote-paths`）时，任意远端路径都允许，但启动时会打印警告。强烈建议显式配置 `allowedRemotePaths` 白名单，避免模型被 prompt 注入后读写 `~/.ssh/authorized_keys`、`/etc/sshd_config` 之类敏感文件。
 
 ## 🎮 演示
 

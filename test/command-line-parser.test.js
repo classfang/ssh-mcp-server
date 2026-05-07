@@ -311,6 +311,21 @@ Host testhost
       assert.strictEqual(result.configs.default.allowedLocalPaths.length, 2);
       assert.ok(result.configs.default.allowedLocalPaths.every((entry) => entry.startsWith('/')));
     });
+
+    it('应该正确解析 allowed remote paths', () => {
+      process.argv = ['node', 'test', '--host', '1.2.3.4', '--port', '22', '--username', 'user', '--password', 'pass', '--allowed-remote-paths', '/var/log,/home/ops/inbox/'];
+      const result = CommandLineParser.parseArgs();
+
+      assert.deepStrictEqual(
+        result.configs.default.allowedRemotePaths,
+        ['/var/log', '/home/ops/inbox']
+      );
+    });
+
+    it('相对的 allowedRemotePaths 条目应抛出错误', () => {
+      process.argv = ['node', 'test', '--host', '1.2.3.4', '--port', '22', '--username', 'user', '--password', 'pass', '--allowed-remote-paths', 'var/log'];
+      assert.throws(() => CommandLineParser.parseArgs(), /absolute POSIX/);
+    });
   });
 
   describe('优先级测试', () => {

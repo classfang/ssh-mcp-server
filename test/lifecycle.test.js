@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert';
-import { spawn, spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -72,31 +72,26 @@ function createTempConfig() {
   return { tmpDir, configPath };
 }
 
-function spawnServer(configPath, tmpDir) {
-  const fifoPath = path.join(tmpDir, 'stdin.fifo');
-  const mkfifo = spawnSync('mkfifo', [fifoPath]);
-  if (mkfifo.status !== 0) {
-    throw new Error(`Failed to create FIFO: ${mkfifo.stderr.toString()}`);
-  }
-
-  const readFd = fs.openSync(fifoPath, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
-  const writeFd = fs.openSync(fifoPath, fs.constants.O_WRONLY | fs.constants.O_NONBLOCK);
+function spawnServer(configPath) {
   const child = spawn(process.execPath, [entrypoint, '--config-file', configPath], {
-    stdio: [readFd, 'pipe', 'pipe'],
+    stdio: ['pipe', 'pipe', 'pipe'],
   });
 
-  fs.closeSync(readFd);
-
+  let closed = false;
   return {
     child,
-    closeInput: () => fs.closeSync(writeFd),
+    closeInput: () => {
+      if (closed) return;
+      closed = true;
+      child.stdin.end();
+    },
   };
 }
 
 describe('MCP server lifecycle', () => {
   it('exits after SIGTERM even when stdin remains open', async () => {
     const { tmpDir, configPath } = createTempConfig();
-    const { child, closeInput } = spawnServer(configPath, tmpDir);
+    const { child, closeInput } = spawnServer(configPath);
 
     try {
       await waitForRunning(child, 1500);
@@ -117,7 +112,7 @@ describe('MCP server lifecycle', () => {
 
   it('exits after stdin is closed', async () => {
     const { tmpDir, configPath } = createTempConfig();
-    const { child, closeInput } = spawnServer(configPath, tmpDir);
+    const { child, closeInput } = spawnServer(configPath);
 
     try {
       await waitForRunning(child);

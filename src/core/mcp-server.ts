@@ -92,6 +92,16 @@ export class SshMcpServer {
         "info"
       );
     }
+    if (
+      allConfigs.some(
+        (c) => !c.allowedRemotePaths || c.allowedRemotePaths.length === 0
+      )
+    ) {
+      Logger.log(
+        "WARNING: Running without allowedRemotePaths is strongly discouraged. SFTP upload/download can read or write any path on the remote server. Configure allowedRemotePaths to restrict the SFTP surface.",
+        "info"
+      );
+    }
 
     // Pre-connect to all servers if flag is set
     if (parsedArgs.preConnect) {

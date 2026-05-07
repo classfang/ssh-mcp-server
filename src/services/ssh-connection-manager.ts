@@ -267,6 +267,55 @@ export class SSHConnectionManager {
     return resolvedPath;
   }
 
+  private validateRemotePath(remotePath: string, name?: string): string {
+    if (typeof remotePath !== "string" || remotePath.length === 0) {
+      throw new ToolError(
+        "REMOTE_PATH_NOT_ALLOWED",
+        "Remote path must be a non-empty string.",
+        false,
+      );
+    }
+    if (remotePath.includes("\0")) {
+      throw new ToolError(
+        "REMOTE_PATH_NOT_ALLOWED",
+        "Remote path must not contain null bytes.",
+        false,
+      );
+    }
+    if (!path.posix.isAbsolute(remotePath)) {
+      throw new ToolError(
+        "REMOTE_PATH_NOT_ALLOWED",
+        `Remote path must be an absolute POSIX path, got: ${remotePath}`,
+        false,
+      );
+    }
+
+    const resolvedPath = path.posix.normalize(remotePath);
+    const config = this.getConfig(name);
+    const allowedRoots = config.allowedRemotePaths || [];
+
+    if (allowedRoots.length === 0) {
+      return resolvedPath;
+    }
+
+    const isAllowed = allowedRoots.some(
+      (allowedRoot) =>
+        resolvedPath === allowedRoot ||
+        resolvedPath.startsWith(
+          allowedRoot.endsWith("/") ? allowedRoot : `${allowedRoot}/`,
+        ),
+    );
+
+    if (!isAllowed) {
+      throw new ToolError(
+        "REMOTE_PATH_NOT_ALLOWED",
+        "Remote path is not within the configured allowedRemotePaths.",
+        false,
+      );
+    }
+    return resolvedPath;
+  }
+
   /**
    * Upload file
    */
@@ -285,6 +334,7 @@ export class SSHConnectionManager {
     }
 
     const validatedLocalPath = this.validateLocalPath(localPath);
+    const validatedRemotePath = this.validateRemotePath(remotePath, name);
     const client = await this.ensureConnected(name);
 
     return new Promise<string>((resolve, reject) => {
@@ -300,7 +350,7 @@ export class SSHConnectionManager {
         }
 
         const readStream = fs.createReadStream(validatedLocalPath);
-        const writeStream = sftp.createWriteStream(remotePath);
+        const writeStream = sftp.createWriteStream(validatedRemotePath);
 
         const cleanup = () => {
           sftp.end();
@@ -356,6 +406,7 @@ export class SSHConnectionManager {
     }
 
     const validatedLocalPath = this.validateLocalPath(localPath);
+    const validatedRemotePath = this.validateRemotePath(remotePath, name);
     const client = await this.ensureConnected(name);
 
     return new Promise<string>((resolve, reject) => {
@@ -370,7 +421,7 @@ export class SSHConnectionManager {
           );
         }
 
-        const readStream = sftp.createReadStream(remotePath);
+        const readStream = sftp.createReadStream(validatedRemotePath);
         const writeStream = fs.createWriteStream(validatedLocalPath);
 
         const cleanup = () => {

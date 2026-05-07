@@ -214,6 +214,81 @@ describe('SSH Connection Manager', () => {
       assert.throws(() => manager.validateLocalPath('/etc/passwd'), ToolError);
       assert.strictEqual(manager.validateLocalPath('/tmp/test.txt'), '/tmp/test.txt');
     });
+
+    it('未配置 allowedRemotePaths 时 validateRemotePath 放行绝对路径', () => {
+      manager.setConfig({
+        dev: createPasswordConfig({ name: 'dev' }),
+      });
+
+      assert.strictEqual(manager.validateRemotePath('/tmp/a.txt', 'dev'), '/tmp/a.txt');
+    });
+
+    it('validateRemotePath 拒绝相对路径', () => {
+      manager.setConfig({
+        dev: createPasswordConfig({ name: 'dev' }),
+      });
+
+      assert.throws(
+        () => manager.validateRemotePath('tmp/a.txt', 'dev'),
+        (err) => err instanceof ToolError && err.code === 'REMOTE_PATH_NOT_ALLOWED',
+      );
+    });
+
+    it('validateRemotePath 拒绝空串与 null byte', () => {
+      manager.setConfig({
+        dev: createPasswordConfig({ name: 'dev' }),
+      });
+
+      assert.throws(
+        () => manager.validateRemotePath('', 'dev'),
+        (err) => err instanceof ToolError && err.code === 'REMOTE_PATH_NOT_ALLOWED',
+      );
+      assert.throws(
+        () => manager.validateRemotePath('/tmp/\0evil', 'dev'),
+        (err) => err instanceof ToolError && err.code === 'REMOTE_PATH_NOT_ALLOWED',
+      );
+    });
+
+    it('配置 allowedRemotePaths 后只允许前缀匹配的路径', () => {
+      manager.setConfig({
+        dev: createPasswordConfig({
+          name: 'dev',
+          allowedRemotePaths: ['/home/ops/inbox', '/var/log'],
+        }),
+      });
+
+      assert.strictEqual(
+        manager.validateRemotePath('/home/ops/inbox/file', 'dev'),
+        '/home/ops/inbox/file',
+      );
+      assert.strictEqual(
+        manager.validateRemotePath('/var/log', 'dev'),
+        '/var/log',
+      );
+      assert.throws(
+        () => manager.validateRemotePath('/etc/passwd', 'dev'),
+        (err) => err instanceof ToolError && err.code === 'REMOTE_PATH_NOT_ALLOWED',
+      );
+      // prefix-string trap: /home/ops/inbox-other must NOT match /home/ops/inbox
+      assert.throws(
+        () => manager.validateRemotePath('/home/ops/inbox-other/f', 'dev'),
+        (err) => err instanceof ToolError && err.code === 'REMOTE_PATH_NOT_ALLOWED',
+      );
+    });
+
+    it('validateRemotePath 归一化 .. 并据此做边界判断', () => {
+      manager.setConfig({
+        dev: createPasswordConfig({
+          name: 'dev',
+          allowedRemotePaths: ['/home/ops/inbox'],
+        }),
+      });
+
+      assert.throws(
+        () => manager.validateRemotePath('/home/ops/inbox/../../../etc/passwd', 'dev'),
+        (err) => err instanceof ToolError && err.code === 'REMOTE_PATH_NOT_ALLOWED',
+      );
+    });
   });
 
   describe('默认连接名称', () => {
