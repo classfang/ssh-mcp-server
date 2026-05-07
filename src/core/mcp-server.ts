@@ -64,9 +64,9 @@ export class SshMcpServer {
 
     process.once("SIGINT", handleSignal);
     process.once("SIGTERM", handleSignal);
+    process.stdin.resume();
     process.stdin.once("end", () => void this.shutdown("stdin end", 0));
     process.stdin.once("close", () => void this.shutdown("stdin close", 0));
-    process.once("beforeExit", () => void this.shutdown("beforeExit"));
 
     this.shutdownHandlersRegistered = true;
   }

@@ -25,6 +25,7 @@ Welcome to join wechat group:
 - **🔒 Secure Connections**: Supports multiple secure SSH connection methods, including password authentication and private key authentication (with passphrase support)
 - **🛡️ Command Security Control**: Precisely control the range of allowed commands through flexible blacklist and whitelist mechanisms to prevent dangerous operations
 - **🔄 Standardized Interface**: Complies with MCP protocol specifications for seamless integration with AI assistants supporting the protocol
+- **🚇 Dual Transport Modes**: Supports both `exec` and `shell` transport modes for direct SSH hosts and bastion or jump-host scenarios
 - **📂 File Transfer**: Supports bidirectional file transfers, uploading local files to servers or downloading files from servers
 - **🔑 Credential Isolation**: SSH credentials are managed entirely locally and never exposed to AI models, enhancing security
 - **🚀 Ready to Use**: Can be run directly using NPX without global installation, making it convenient and quick to deploy
@@ -63,13 +64,62 @@ Options:
   -w, --password      SSH password
   -k, --privateKey    SSH private key file path
   -P, --passphrase    Private key passphrase (if any)
+  -a, --agent         SSH agent socket path
   -W, --whitelist     Command whitelist, comma-separated regular expressions
   -B, --blacklist     Command blacklist, comma-separated regular expressions
   -s, --socksProxy    SOCKS proxy server address (e.g., socks://user:password@host:port)
   --allowed-local-paths Additional allowed local paths for upload/download, comma-separated
+  --transport-mode    SSH transport mode: exec or shell (default: exec)
+  --shell-ready-timeout Shell readiness probe timeout in milliseconds (default: 10000)
   --pty               Allocate pseudo-tty for command execution (default: true)
   --pre-connect       Pre-connect to all configured SSH servers on startup
 
+```
+
+#### 🚇 When To Use `transportMode`
+
+`transportMode` defaults to `exec`.
+
+- Use `exec` for regular Linux hosts that support standard SSH command execution.
+- Use `shell` for bastion hosts, jump hosts, network devices, or environments where you must enter an interactive shell before commands work reliably.
+
+Behavior differences:
+
+- `exec`: supports `execute-command`, `upload`, and `download`
+- `shell`: runs commands through a persistent shell session with an internal command queue, but does not support `upload` or `download` because SFTP is unavailable in this mode
+
+Switch to `shell` when:
+
+- SSH login succeeds but `exec` command execution fails
+- The remote side requires shell startup scripts, banners, or environment initialization first
+- The target effectively exposes only an interactive shell
+
+Configuration:
+
+- CLI: `--transport-mode shell --shell-ready-timeout 15000`
+- JSON config: set `transportMode` to `"shell"` and optionally set `shellReadyTimeoutMs`
+- JSON config only: use `shellCommandTimeoutMs` to override the default timeout for shell-backed commands
+
+Example:
+
+```json
+{
+  "mcpServers": {
+    "ssh-mcp-server": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@fangjunjie/ssh-mcp-server",
+        "--host", "bastion.example.com",
+        "--port", "22",
+        "--username", "ops",
+        "--password", "pwd123456",
+        "--transport-mode", "shell",
+        "--shell-ready-timeout", "15000"
+      ]
+    }
+  }
+}
 ```
 
 #### 🔑 Using Password
@@ -272,6 +322,16 @@ Create a JSON configuration file (e.g., `ssh-config.json`):
     "socksProxy": "socks://127.0.0.1:10808"
   },
   {
+    "name": "bastion",
+    "host": "9.9.9.9",
+    "port": 22,
+    "username": "ops",
+    "password": "pwd123456",
+    "transportMode": "shell",
+    "shellReadyTimeoutMs": 15000,
+    "shellCommandTimeoutMs": 45000
+  },
+  {
     "name": "prod",
     "host": "5.6.7.8",
     "port": 22,
@@ -291,6 +351,15 @@ Create a JSON configuration file (e.g., `ssh-config.json`):
     "username": "alice",
     "password": "{abc=P100s0}",
     "socksProxy": "socks://127.0.0.1:10808"
+  },
+  "bastion": {
+    "host": "9.9.9.9",
+    "port": 22,
+    "username": "ops",
+    "password": "pwd123456",
+    "transportMode": "shell",
+    "shellReadyTimeoutMs": 15000,
+    "shellCommandTimeoutMs": 45000
   },
   "prod": {
     "host": "5.6.7.8",
@@ -332,6 +401,7 @@ You can pass JSON-formatted configuration strings directly:
         "-y",
         "@fangjunjie/ssh-mcp-server",
         "--ssh", "{\"name\":\"dev\",\"host\":\"1.2.3.4\",\"port\":22,\"username\":\"alice\",\"password\":\"{abc=P100s0}\",\"socksProxy\":\"socks://127.0.0.1:10808\"}",
+        "--ssh", "{\"name\":\"bastion\",\"host\":\"9.9.9.9\",\"port\":22,\"username\":\"ops\",\"password\":\"pwd123456\",\"transportMode\":\"shell\",\"shellReadyTimeoutMs\":15000}",
         "--ssh", "{\"name\":\"prod\",\"host\":\"5.6.7.8\",\"port\":22,\"username\":\"bob\",\"password\":\"yyy\",\"socksProxy\":\"socks://127.0.0.1:10808\"}"
       ]
     }
@@ -383,6 +453,7 @@ Example (execute command with timeout options):
 The `execute-command` tool supports timeout options to prevent commands from hanging indefinitely:
 
 - **timeout**: Command execution timeout in milliseconds (optional, default is 30000ms)
+- In `shell` mode, you can also set `shellCommandTimeoutMs` per connection in the JSON config file
 - Error responses include stable `code`, `message`, and `retriable` fields for easier agent-side handling
 
 This is particularly useful for commands like `ping`, `tail -f`, or other long-running processes that might block execution.
