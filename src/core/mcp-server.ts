@@ -94,7 +94,9 @@ export class SshMcpServer {
     }
     if (
       allConfigs.some(
-        (c) => !c.allowedRemotePaths || c.allowedRemotePaths.length === 0
+        (c) =>
+          (c.transportMode || "exec") === "exec" &&
+          (!c.allowedRemotePaths || c.allowedRemotePaths.length === 0)
       )
     ) {
       Logger.log(

@@ -25,6 +25,16 @@ type ShellCommandMatch = {
 const ANSI_OSC_PATTERN = /\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)/g;
 const ANSI_CSI_PATTERN = /\u001b\[[0-?]*[ -/]*[@-~]/g;
 
+const COMMAND_TEMPLATE_PLACEHOLDER = "<command>";
+
+function applyCommandTemplate(template: string, command: string): string {
+  return template.split(COMMAND_TEMPLATE_PLACEHOLDER).join(command);
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
 /**
  * SSH Connection Manager class
  */
@@ -623,16 +633,16 @@ export class SSHConnectionManager {
         callback: (nextAuth: string | string[]) => void,
       ) => {
         if (methodsLeft === null) {
-          // Initial authentication attempt
+          // Initial authentication attempt — the SSH protocol only defines
+          // password / publickey / keyboard-interactive / hostbased.
+          // SSH agent works under the publickey method, so it does not get
+          // its own entry here.
           const authMethods: string[] = [];
-          if (config.privateKey) {
+          if (config.privateKey || config.agent) {
             authMethods.push("publickey");
           }
           if (config.password) {
             authMethods.push("password");
-          }
-          if (config.agent) {
-            authMethods.push("agent");
           }
           authMethods.push("keyboard-interactive");
 
@@ -657,7 +667,11 @@ export class SSHConnectionManager {
           return callback("password");
         }
 
-        if (methodsLeft && methodsLeft.includes("publickey") && config.privateKey) {
+        if (
+          methodsLeft &&
+          methodsLeft.includes("publickey") &&
+          (config.privateKey || config.agent)
+        ) {
           return callback("publickey");
         }
 
@@ -680,25 +694,33 @@ export class SSHConnectionManager {
         Logger.log(`[${key}] Instructions: ${instructions}`, "debug");
         Logger.log(`[${key}] Prompts: ${JSON.stringify(prompts)}`, "debug");
 
+        const otpCode = process.env.SSH_MCP_2FA_CODE;
         const responses: string[] = [];
         for (const prompt of prompts) {
+          const promptText = prompt.prompt.toLowerCase();
           // For password prompts, use the configured password
           if (
             config.password &&
-            (prompt.prompt.toLowerCase().includes("password") ||
-              prompt.prompt.toLowerCase().includes("密码"))
+            (promptText.includes("password") || promptText.includes("密码"))
           ) {
             responses.push(config.password);
             Logger.log(
               `[${key}] Responding to password prompt: ${prompt.prompt}`,
               "debug",
             );
+          } else if (otpCode) {
+            // For 2FA/verification code prompts, use SSH_MCP_2FA_CODE if provided
+            responses.push(otpCode);
+            Logger.log(
+              `[${key}] Responding to non-password prompt with SSH_MCP_2FA_CODE: ${prompt.prompt}`,
+              "info",
+            );
           } else {
-            // For 2FA/verification code prompts, return empty string
-            // The connection will fail and user needs to provide the code
+            // No code available — empty response will fail the auth attempt;
+            // set SSH_MCP_2FA_CODE before connecting to enable 2FA/MFA.
             responses.push("");
             Logger.log(
-              `[${key}] Empty response for prompt (2FA code required): ${prompt.prompt}`,
+              `[${key}] Empty response for prompt (set SSH_MCP_2FA_CODE to satisfy 2FA): ${prompt.prompt}`,
               "info",
             );
           }
@@ -920,11 +942,11 @@ export class SSHConnectionManager {
     timeout: number,
   ): Promise<string> {
     let commandToRun = directory
-      ? `cd -- ${JSON.stringify(directory)} && ${cmdString}`
+      ? `cd -- ${shellQuote(directory)} && ${cmdString}`
       : cmdString;
 
     if (config.commandTemplate) {
-      commandToRun = config.commandTemplate.replace("<command>", commandToRun);
+      commandToRun = applyCommandTemplate(config.commandTemplate, commandToRun);
     }
 
     return new Promise<string>((resolve, reject) => {
@@ -1387,11 +1409,11 @@ export class SSHConnectionManager {
     const beginMarker = `__MCP_BEGIN__${commandId}__`;
     const endMarker = `__MCP_END__${commandId}__RC__`;
     let commandBody = directory
-      ? `cd -- ${JSON.stringify(directory)} && { ${cmdString}; }`
+      ? `cd -- ${shellQuote(directory)} && { ${cmdString}; }`
       : `{ ${cmdString}; }`;
 
     if (commandTemplate) {
-      commandBody = commandTemplate.replace("<command>", commandBody);
+      commandBody = applyCommandTemplate(commandTemplate, commandBody);
     }
 
     return [

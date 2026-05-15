@@ -448,7 +448,7 @@ describe('SSH Connection Manager', () => {
       );
 
       assert.strictEqual(result, 'hello\nwarning');
-      assert.match(seenScript, /cd -- "\/tmp\/work dir" && \{ printf "hello\\nwarning\\n"; \}/);
+      assert.match(seenScript, /cd -- '\/tmp\/work dir' && \{ printf "hello\\nwarning\\n"; \}/);
     });
 
     it('shell 模式会清理 ANSI 和终端标题噪音', async () => {
@@ -652,7 +652,7 @@ describe('SSH Connection Manager', () => {
       const client = new FakeClient({
         onConnect: () => setImmediate(() => client.emit('ready')),
         onExec: ({ command, options, callback }) => {
-          assert.strictEqual(command, 'cd -- "/tmp" && pwd');
+          assert.strictEqual(command, "cd -- '/tmp' && pwd");
           assert.deepStrictEqual(options, { pty: true });
           callback(undefined, stream);
           setImmediate(() => {
@@ -683,7 +683,7 @@ describe('SSH Connection Manager', () => {
       const client = new FakeClient({
         onConnect: () => setImmediate(() => client.emit('ready')),
         onExec: ({ command, options, callback }) => {
-          assert.strictEqual(command, "su root -c 'cd -- \"/app\" && ls'");
+          assert.strictEqual(command, "su root -c 'cd -- '/app' && ls'");
           callback(undefined, stream);
           setImmediate(() => {
             stream.emit('data', Buffer.from('file.txt\n'));
@@ -734,6 +734,97 @@ describe('SSH Connection Manager', () => {
 
       const result = await manager.executeCommand('whoami', undefined, 'tmpl2');
       assert.strictEqual(result, 'root');
+    });
+
+    it('commandTemplate 不解释 $& 等 replace 特殊序列', async () => {
+      const stream = new FakeExecStream();
+      const client = new FakeClient({
+        onConnect: () => setImmediate(() => client.emit('ready')),
+        onExec: ({ command, callback }) => {
+          assert.strictEqual(command, "su root -c 'echo $& test'");
+          callback(undefined, stream);
+          setImmediate(() => {
+            stream.emit('data', Buffer.from('ok\n'));
+            stream.emit('exit', 0);
+            stream.emit('close', 0);
+          });
+        },
+      });
+
+      manager.createClient = () => client;
+      manager.scheduleStatusCollection = () => {};
+      manager.setConfig({
+        tmpl3: createPasswordConfig({
+          name: 'tmpl3',
+          transportMode: 'exec',
+          commandTemplate: "su root -c '<command>'",
+        }),
+      });
+
+      const result = await manager.executeCommand('echo $& test', undefined, 'tmpl3');
+      assert.strictEqual(result, 'ok');
+    });
+
+    it('directory 中的命令替换字符不会被 shell 展开', async () => {
+      const stream = new FakeExecStream();
+      const client = new FakeClient({
+        onConnect: () => setImmediate(() => client.emit('ready')),
+        onExec: ({ command, callback }) => {
+          assert.strictEqual(
+            command,
+            "cd -- '$(rm -rf /tmp/x)' && ls",
+          );
+          callback(undefined, stream);
+          setImmediate(() => {
+            stream.emit('data', Buffer.from('done\n'));
+            stream.emit('exit', 0);
+            stream.emit('close', 0);
+          });
+        },
+      });
+
+      manager.createClient = () => client;
+      manager.scheduleStatusCollection = () => {};
+      manager.setConfig({
+        inj: createPasswordConfig({
+          name: 'inj',
+          transportMode: 'exec',
+        }),
+      });
+
+      const result = await manager.executeCommand('ls', '$(rm -rf /tmp/x)', 'inj');
+      assert.strictEqual(result, 'done');
+    });
+
+    it('directory 中的单引号会被正确转义', async () => {
+      const stream = new FakeExecStream();
+      const client = new FakeClient({
+        onConnect: () => setImmediate(() => client.emit('ready')),
+        onExec: ({ command, callback }) => {
+          assert.strictEqual(
+            command,
+            "cd -- '/tmp/it'\\''s' && ls",
+          );
+          callback(undefined, stream);
+          setImmediate(() => {
+            stream.emit('data', Buffer.from('done\n'));
+            stream.emit('exit', 0);
+            stream.emit('close', 0);
+          });
+        },
+      });
+
+      manager.createClient = () => client;
+      manager.scheduleStatusCollection = () => {};
+      manager.setConfig({
+        quote: createPasswordConfig({
+          name: 'quote',
+          transportMode: 'exec',
+        }),
+      });
+
+      const result = await manager.executeCommand('ls', "/tmp/it's", 'quote');
+      assert.strictEqual(result, 'done');
     });
   });
 });

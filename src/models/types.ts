@@ -10,7 +10,7 @@ export interface SSHConfig {
   privateKey?: string;
   passphrase?: string;
   agent?: string; // SSH agent for authentication (use 'pageant' for Windows Pageant)
-  tryKeyboard?: boolean; // Enable keyboard-interactive authentication for 2FA/MFA, default: false
+  tryKeyboard?: boolean; // Enable keyboard-interactive authentication. Password prompts use `password`; non-password prompts (e.g. OTP) use the SSH_MCP_2FA_CODE env var. Default: false
   commandWhitelist?: string[]; // Command whitelist (array of regex strings)
   commandBlacklist?: string[]; // Command blacklist (array of regex strings)
   socksProxy?: string; // SOCKS proxy URL, e.g. 'socks://user:pass@host:port'
