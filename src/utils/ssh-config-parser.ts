@@ -68,6 +68,10 @@ function parseConfigFile(filePath: string, visited: Set<string>): HostBlock[] {
 
     // 解析 Include 指令
     if (line.toLowerCase().startsWith('include ')) {
+      if (currentBlock) {
+        blocks.push(currentBlock);
+        currentBlock = null;
+      }
       const pattern = line.substring(8).trim();
       const includePaths = expandIncludePath(pattern, path.dirname(filePath));
       for (const includePath of includePaths) {
@@ -92,16 +96,21 @@ function parseConfigFile(filePath: string, visited: Set<string>): HostBlock[] {
     }
 
     // 解析配置项
-    if (currentBlock) {
-      const spaceIndex = line.search(/\s/);
-      if (spaceIndex !== -1) {
-        const key = line.substring(0, spaceIndex).toLowerCase();
-        const value = line.substring(spaceIndex + 1).trim();
+    if (!currentBlock) {
+      currentBlock = {
+        patterns: ['*'],
+        config: new Map()
+      };
+    }
 
-        // 只保存第一次出现的值（SSH first-match-wins）
-        if (!currentBlock.config.has(key)) {
-          currentBlock.config.set(key, value);
-        }
+    const spaceIndex = line.search(/\s/);
+    if (spaceIndex !== -1) {
+      const key = line.substring(0, spaceIndex).toLowerCase();
+      const value = line.substring(spaceIndex + 1).trim();
+
+      // 只保存第一次出现的值（SSH first-match-wins）
+      if (!currentBlock.config.has(key)) {
+        currentBlock.config.set(key, value);
       }
     }
   }
@@ -153,15 +162,7 @@ function matchHost(hostAlias: string, blocks: HostBlock[]): SshConfigEntry | nul
   const result: SshConfigEntry = {};
 
   for (const block of blocks) {
-    // 检查是否匹配任一 pattern
-    const matched = block.patterns.some(pattern => {
-      if (pattern === '*') return true;
-      // 简单通配符匹配（仅支持 * 和 ?）
-      const regex = new RegExp(
-        '^' + pattern.replace(/\*/g, '.*').replace(/\?/g, '.') + '$'
-      );
-      return regex.test(hostAlias);
-    });
+    const matched = hostBlockMatches(hostAlias, block.patterns);
 
     if (!matched) continue;
 
@@ -185,6 +186,40 @@ function matchHost(hostAlias: string, blocks: HostBlock[]): SshConfigEntry | nul
   }
 
   return Object.keys(result).length > 0 ? result : null;
+}
+
+function hostBlockMatches(hostAlias: string, patterns: string[]): boolean {
+  let positiveMatch = false;
+
+  for (const pattern of patterns) {
+    const isNegated = pattern.startsWith('!');
+    const patternBody = isNegated ? pattern.slice(1) : pattern;
+    if (!patternBody) {
+      continue;
+    }
+
+    if (hostPatternMatches(hostAlias, patternBody)) {
+      if (isNegated) {
+        return false;
+      }
+      positiveMatch = true;
+    }
+  }
+
+  return positiveMatch;
+}
+
+function hostPatternMatches(hostAlias: string, pattern: string): boolean {
+  if (pattern === '*') {
+    return true;
+  }
+
+  const regexSource = pattern
+    .replace(/[.+^${}()|[\]\\]/g, '\\$&')
+    .replace(/\*/g, '.*')
+    .replace(/\?/g, '.');
+
+  return new RegExp(`^${regexSource}$`).test(hostAlias);
 }
 
 /**

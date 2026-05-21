@@ -2,8 +2,13 @@ import { describe, it, before, afterEach } from 'node:test';
 import assert from 'node:assert';
 import { EventEmitter } from 'node:events';
 import { setTimeout as delay } from 'node:timers/promises';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
+import { SocksClient } from 'socks';
 import { SSHConnectionManager } from '../build/services/ssh-connection-manager.js';
 import { ToolError } from '../build/utils/tool-error.js';
+import { Logger } from '../build/utils/logger.js';
 
 class FakeExecStream extends EventEmitter {
   constructor() {
@@ -86,6 +91,10 @@ function createPasswordConfig(overrides = {}) {
 function extractMarkerId(payload, prefix) {
   const match = payload.match(new RegExp(`${prefix}(.+?)__`));
   return match?.[1];
+}
+
+function shellQuoteForTest(value) {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
 function emitShellCommandResult(channel, commandId, output, exitCode) {
@@ -215,6 +224,61 @@ describe('SSH Connection Manager', () => {
       assert.strictEqual(manager.validateLocalPath('/tmp/test.txt'), '/tmp/test.txt');
     });
 
+    it('本地允许路径应按连接隔离', () => {
+      const firstRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ssh-mcp-first-'));
+      const secondRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ssh-mcp-second-'));
+
+      try {
+        manager.setConfig({
+          first: createPasswordConfig({
+            name: 'first',
+            allowedLocalPaths: [firstRoot],
+          }),
+          second: createPasswordConfig({
+            name: 'second',
+            allowedLocalPaths: [secondRoot],
+          }),
+        });
+
+        const firstPath = path.join(firstRoot, 'file.txt');
+        assert.strictEqual(manager.validateLocalPath(firstPath, 'first'), firstPath);
+        assert.throws(
+          () => manager.validateLocalPath(firstPath, 'second'),
+          (err) => err instanceof ToolError && err.code === 'LOCAL_PATH_NOT_ALLOWED',
+        );
+      } finally {
+        fs.rmSync(firstRoot, { recursive: true, force: true });
+        fs.rmSync(secondRoot, { recursive: true, force: true });
+      }
+    });
+
+    it('本地路径校验应拒绝通过符号链接逃出允许目录', () => {
+      const allowedRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ssh-mcp-allowed-'));
+      const outsideRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ssh-mcp-outside-'));
+      const outsideFile = path.join(outsideRoot, 'secret.txt');
+      const symlinkPath = path.join(allowedRoot, 'link');
+
+      try {
+        fs.writeFileSync(outsideFile, 'secret');
+        fs.symlinkSync(outsideRoot, symlinkPath, 'dir');
+
+        manager.setConfig({
+          dev: createPasswordConfig({
+            name: 'dev',
+            allowedLocalPaths: [allowedRoot],
+          }),
+        });
+
+        assert.throws(
+          () => manager.validateLocalPath(path.join(symlinkPath, 'secret.txt'), 'dev'),
+          (err) => err instanceof ToolError && err.code === 'LOCAL_PATH_NOT_ALLOWED',
+        );
+      } finally {
+        fs.rmSync(allowedRoot, { recursive: true, force: true });
+        fs.rmSync(outsideRoot, { recursive: true, force: true });
+      }
+    });
+
     it('未配置 allowedRemotePaths 时 validateRemotePath 放行绝对路径', () => {
       manager.setConfig({
         dev: createPasswordConfig({ name: 'dev' }),
@@ -313,6 +377,107 @@ describe('SSH Connection Manager', () => {
 
       const config = manager.getConfig();
       assert.strictEqual(config.host, '2.2.2.2');
+    });
+  });
+
+  describe('安全边界', () => {
+    it('状态采集命令不应绕过命令白名单', async () => {
+      const originalRunCommandInternal = manager.runCommandInternal;
+      const seenCalls = [];
+
+      manager.setConfig({
+        dev: createPasswordConfig({
+          name: 'dev',
+          commandWhitelist: ['^echo$'],
+        }),
+      });
+
+      manager.runCommandInternal = async (command, directory, name, options) => {
+        seenCalls.push({ command, options });
+        const validationResult = manager.validateCommand(command, name);
+        if (!validationResult.isAllowed) {
+          throw new ToolError(
+            'COMMAND_VALIDATION_FAILED',
+            validationResult.reason,
+            false,
+          );
+        }
+        return 'ok';
+      };
+
+      try {
+        await manager.collectStatusForConnection('dev');
+      } finally {
+        manager.runCommandInternal = originalRunCommandInternal;
+      }
+
+      assert.ok(seenCalls.length > 0);
+      assert.ok(seenCalls.every((call) => call.options === undefined));
+      assert.strictEqual(manager.statusCache.get('dev').reachable, true);
+    });
+
+    it('SOCKS 代理应传递认证信息并脱敏日志', async () => {
+      const originalCreateConnection = SocksClient.createConnection;
+      const originalLog = Logger.log;
+      const logs = [];
+      let socksOptions;
+
+      SocksClient.createConnection = async (options) => {
+        socksOptions = options;
+        return { socket: { mocked: true } };
+      };
+      Logger.log = (message, level) => {
+        logs.push({ message, level });
+      };
+
+      try {
+        const sshConfig = await manager.buildClientConfig(
+          'proxy',
+          createPasswordConfig({
+            name: 'proxy',
+            socksProxy: 'socks://proxy-user:proxy-pass@proxy.local:1080',
+          }),
+        );
+
+        assert.strictEqual(socksOptions.proxy.userId, 'proxy-user');
+        assert.strictEqual(socksOptions.proxy.password, 'proxy-pass');
+        assert.strictEqual(socksOptions.proxy.host, 'proxy.local');
+        assert.strictEqual(socksOptions.proxy.port, 1080);
+        assert.deepStrictEqual(sshConfig.sock, { mocked: true });
+        assert.ok(logs.some((entry) => entry.message.includes('proxy.local')));
+        assert.ok(logs.every((entry) => !entry.message.includes('proxy-user')));
+        assert.ok(logs.every((entry) => !entry.message.includes('proxy-pass')));
+      } finally {
+        SocksClient.createConnection = originalCreateConnection;
+        Logger.log = originalLog;
+      }
+    });
+
+    it('connectAll 应尝试所有连接后再汇总失败', async () => {
+      const originalConnect = manager.connect;
+      const attempted = [];
+
+      manager.setConfig({
+        good: createPasswordConfig({ name: 'good' }),
+        bad: createPasswordConfig({ name: 'bad' }),
+      });
+
+      manager.connect = async (name) => {
+        attempted.push(name);
+        if (name === 'bad') {
+          throw new Error('boom');
+        }
+      };
+
+      try {
+        await assert.rejects(
+          () => manager.connectAll(),
+          (error) => error instanceof ToolError && error.code === 'SSH_CONNECTION_FAILED',
+        );
+        assert.deepStrictEqual(attempted.sort(), ['bad', 'good']);
+      } finally {
+        manager.connect = originalConnect;
+      }
     });
   });
 
@@ -683,7 +848,10 @@ describe('SSH Connection Manager', () => {
       const client = new FakeClient({
         onConnect: () => setImmediate(() => client.emit('ready')),
         onExec: ({ command, options, callback }) => {
-          assert.strictEqual(command, "su root -c 'cd -- '/app' && ls'");
+          assert.strictEqual(
+            command,
+            `su root -c ${shellQuoteForTest("cd -- '/app' && ls")}`,
+          );
           callback(undefined, stream);
           setImmediate(() => {
             stream.emit('data', Buffer.from('file.txt\n'));
@@ -705,6 +873,38 @@ describe('SSH Connection Manager', () => {
 
       const result = await manager.executeCommand('ls', '/app', 'tmpl');
       assert.strictEqual(result, 'file.txt');
+    });
+
+    it('commandTemplate 会安全包裹含单引号的工作目录', async () => {
+      const stream = new FakeExecStream();
+      const client = new FakeClient({
+        onConnect: () => setImmediate(() => client.emit('ready')),
+        onExec: ({ command, callback }) => {
+          assert.strictEqual(
+            command,
+            `su root -c ${shellQuoteForTest("cd -- '/tmp/it'\\''s' && ls")}`,
+          );
+          callback(undefined, stream);
+          setImmediate(() => {
+            stream.emit('data', Buffer.from('done\n'));
+            stream.emit('exit', 0);
+            stream.emit('close', 0);
+          });
+        },
+      });
+
+      manager.createClient = () => client;
+      manager.scheduleStatusCollection = () => {};
+      manager.setConfig({
+        tmplQuote: createPasswordConfig({
+          name: 'tmplQuote',
+          transportMode: 'exec',
+          commandTemplate: "su root -c '<command>'",
+        }),
+      });
+
+      const result = await manager.executeCommand('ls', "/tmp/it's", 'tmplQuote');
+      assert.strictEqual(result, 'done');
     });
 
     it('exec 模式无 directory 时 commandTemplate 仅包裹原始命令', async () => {

@@ -20,7 +20,7 @@ export interface SSHConfig {
   transportMode?: "exec" | "shell"; // SSH transport mode, default: exec
   shellReadyTimeoutMs?: number; // Shell readiness probe timeout, default: 10000ms
   shellCommandTimeoutMs?: number; // Shell command timeout override, default: 30000ms
-  commandTemplate?: string; // Command template, use <command> as placeholder, e.g. "su root -c '<command>'"
+  commandTemplate?: string; // Command template, use <quotedCommand> for shell arguments or <command> for raw insertion
 }
 
 /**

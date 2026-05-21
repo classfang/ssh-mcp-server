@@ -2,6 +2,7 @@ import { parseArgs } from "node:util";
 import { SSHConfig, SshConnectionConfigMap, ParsedArgs } from "../models/types.js";
 import fs from "fs";
 import path from "path";
+import os from "os";
 import { lookupSshConfig } from "../utils/ssh-config-parser.js";
 
 /**
@@ -242,7 +243,7 @@ export class CommandLineParser {
         allowedLocalPaths: allowedLocalPaths
           ? allowedLocalPaths
               .split(",")
-              .map((allowedPath) => path.resolve(allowedPath.trim()))
+              .map((allowedPath) => allowedPath.trim())
               .filter(Boolean)
           : undefined,
         allowedRemotePaths: allowedRemotePaths
@@ -309,7 +310,9 @@ export class CommandLineParser {
       port,
       username: config.username || config.user,
       password: config.password,
-      privateKey: config.privateKey,
+      privateKey: config.privateKey
+        ? this.normalizeLocalPath(String(config.privateKey))
+        : undefined,
       passphrase: config.passphrase || process.env.SSH_MCP_PASSPHRASE,
       agent: config.agent,
       socksProxy: config.socksProxy,
@@ -343,11 +346,16 @@ export class CommandLineParser {
         : undefined,
       allowedLocalPaths: Array.isArray(config.allowedLocalPaths)
         ? config.allowedLocalPaths
-            .map((allowedPath: unknown) => path.resolve(String(allowedPath)))
+            .map((allowedPath: unknown) =>
+              this.normalizeLocalPath(String(allowedPath)),
+            )
+            .filter(Boolean)
         : typeof config.allowedLocalPaths === "string"
           ? config.allowedLocalPaths
               .split("|")
-              .map((allowedPath: string) => path.resolve(allowedPath.trim()))
+              .map((allowedPath: string) =>
+                this.normalizeLocalPath(allowedPath.trim()),
+              )
               .filter(Boolean)
           : undefined,
       allowedRemotePaths: Array.isArray(config.allowedRemotePaths)
@@ -375,13 +383,27 @@ export class CommandLineParser {
     }
 
     const template = String(value);
-    if (!template.includes("<command>")) {
+    if (!template.includes("<command>") && !template.includes("<quotedCommand>")) {
       throw new Error(
-        `commandTemplate must contain '<command>' placeholder, got: ${template}`,
+        `commandTemplate must contain '<command>' or '<quotedCommand>' placeholder, got: ${template}`,
       );
     }
 
     return template;
+  }
+
+  private static normalizeLocalPath(localPath: string): string {
+    return path.resolve(this.expandHomePath(localPath));
+  }
+
+  private static expandHomePath(localPath: string): string {
+    if (localPath === "~") {
+      return os.homedir();
+    }
+    if (localPath.startsWith("~/")) {
+      return path.join(os.homedir(), localPath.slice(2));
+    }
+    return localPath;
   }
 
   private static normalizeRemotePath(remotePath: string): string {

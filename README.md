@@ -248,7 +248,7 @@ Blacklist example (block destructive commands):
 
 ### 7. 🧩 Wrapping Commands With a Template
 
-`commandTemplate` wraps every executed command in a template — useful for switching user via `su`, running inside a container, or jumping through another host. Use `<command>` as the placeholder; the template is applied **after** the working-directory `cd` is prepended, so the entire `cd ... && <command>` chain gets wrapped.
+`commandTemplate` wraps every executed command in a template — useful for switching user via `su`, running inside a container, or jumping through another host. Use `<quotedCommand>` when the command is passed as a shell argument, or `<command>` for raw insertion. The template is applied **after** the working-directory `cd` is prepended, so the entire `cd ... && <actual command>` chain gets wrapped.
 
 ```json
 {
@@ -262,7 +262,7 @@ Blacklist example (block destructive commands):
         "--port", "22",
         "--username", "deploy",
         "--password", "xxx",
-        "--command-template", "su root -c '<command>'"
+        "--command-template", "su root -c <quotedCommand>"
       ]
     }
   }
@@ -272,15 +272,15 @@ Blacklist example (block destructive commands):
 Executing `ls /app` with directory `/data` actually sends:
 
 ```
-su root -c 'cd -- "/data" && ls /app'
+su root -c 'cd -- '\''/data'\'' && ls /app'
 ```
 
 Other useful templates:
 
 ```text
-sudo bash -c '<command>'
-docker exec -i mycontainer sh -c '<command>'
-ssh jumphost '<command>'
+sudo bash -c <quotedCommand>
+docker exec -i mycontainer sh -c <quotedCommand>
+ssh jumphost <quotedCommand>
 ```
 
 ### 8. 🚇 Bastion / Jump Host (`transportMode: shell`)
@@ -320,7 +320,7 @@ In JSON config files you can also set `shellCommandTimeoutMs` to override the de
 
 ### 9. 🔐 Multi-Factor Authentication (2FA / MFA)
 
-When the SSH server requires multi-factor authentication (password + private key + 2FA verification code), enable `tryKeyboard`. The password and private key are auto-supplied; the 2FA code currently has to be entered manually at the prompt.
+When the SSH server requires multi-factor authentication (password + private key + 2FA verification code), enable `tryKeyboard`. The password and private key are auto-supplied. For non-password prompts, set `SSH_MCP_2FA_CODE` in the server environment before connecting.
 
 ```json
 {
@@ -345,7 +345,7 @@ When the SSH server requires multi-factor authentication (password + private key
 **Authentication flow:**
 1. Private key authentication (if provided)
 2. Password authentication (if provided)
-3. Keyboard-interactive for 2FA code (currently requires manual input)
+3. Keyboard-interactive for 2FA code via `SSH_MCP_2FA_CODE`
 
 ### 10. 🧩 Managing Multiple SSH Connections
 
@@ -556,7 +556,7 @@ Options:
   --allowed-remote-paths  Allowed remote (POSIX, absolute) paths for SFTP upload/download, comma-separated
   --transport-mode    SSH transport mode: exec or shell (default: exec)
   --shell-ready-timeout   Shell readiness probe timeout in milliseconds (default: 10000)
-  --command-template  Command template, use <command> as placeholder (e.g., "su root -c '<command>'")
+  --command-template  Command template, use <quotedCommand> for shell arguments or <command> for raw insertion
   --pty               Allocate pseudo-tty for command execution (default: true)
   --pre-connect       Pre-connect to all configured SSH servers on startup
 ```

@@ -10,6 +10,10 @@ import { execSync } from 'child_process';
 console.log('🧪 运行测试...\n');
 
 try {
+  execSync('node scripts/build.js', {
+    stdio: 'inherit',
+    cwd: new URL('..', import.meta.url).pathname
+  });
   execSync('node --test test/**/*.test.js', {
     stdio: 'inherit',
     cwd: new URL('..', import.meta.url).pathname

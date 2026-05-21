@@ -10,11 +10,13 @@ import { collectSystemStatus } from "../utils/status-collector.js";
 import { ToolError } from "../utils/tool-error.js";
 import fs from "fs";
 import path from "path";
+import { pipeline } from "node:stream/promises";
 
 type RunCommandOptions = {
   timeout?: number;
-  bypassValidation?: boolean;
 };
+
+type LocalPathPurpose = "read" | "write";
 
 type ShellCommandMatch = {
   output: string;
@@ -26,13 +28,44 @@ const ANSI_OSC_PATTERN = /\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)/g;
 const ANSI_CSI_PATTERN = /\u001b\[[0-?]*[ -/]*[@-~]/g;
 
 const COMMAND_TEMPLATE_PLACEHOLDER = "<command>";
+const QUOTED_COMMAND_TEMPLATE_PLACEHOLDER = "<quotedCommand>";
 
 function applyCommandTemplate(template: string, command: string): string {
-  return template.split(COMMAND_TEMPLATE_PLACEHOLDER).join(command);
+  const quotedCommand = shellQuote(command);
+  return template
+    .split(QUOTED_COMMAND_TEMPLATE_PLACEHOLDER)
+    .join(quotedCommand)
+    .split(`'${COMMAND_TEMPLATE_PLACEHOLDER}'`)
+    .join(quotedCommand)
+    .split(`"${COMMAND_TEMPLATE_PLACEHOLDER}"`)
+    .join(quotedCommand)
+    .split(COMMAND_TEMPLATE_PLACEHOLDER)
+    .join(command);
 }
 
 function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
+function isPathWithinRoot(candidate: string, root: string): boolean {
+  const relativePath = path.relative(root, candidate);
+  return (
+    relativePath === "" ||
+    (relativePath !== "" &&
+      !relativePath.startsWith("..") &&
+      !path.isAbsolute(relativePath))
+  );
+}
+
+function redactProxyUrl(proxyUrl: URL): string {
+  const redactedUrl = new URL(proxyUrl.toString());
+  if (redactedUrl.username) {
+    redactedUrl.username = "***";
+  }
+  if (redactedUrl.password) {
+    redactedUrl.password = "***";
+  }
+  return redactedUrl.toString();
 }
 
 /**
@@ -113,8 +146,33 @@ export class SSHConnectionManager {
    */
   public async connectAll(): Promise<void> {
     const names = Object.keys(this.configs);
-    for (const name of names) {
-      await this.connect(name);
+    const results = await Promise.allSettled(
+      names.map((name) => this.connect(name)),
+    );
+    const failures = results
+      .map((result, index) => ({ result, name: names[index] }))
+      .filter(
+        (entry): entry is {
+          result: PromiseRejectedResult;
+          name: string;
+        } => entry.result.status === "rejected",
+      );
+
+    if (failures.length > 0) {
+      throw new ToolError(
+        "SSH_CONNECTION_FAILED",
+        failures
+          .map(
+            ({ name, result }) =>
+              `[${name}] ${
+                result.reason instanceof Error
+                  ? result.reason.message
+                  : String(result.reason)
+              }`,
+          )
+          .join("; "),
+        true,
+      );
     }
   }
 
@@ -251,30 +309,78 @@ export class SSHConnectionManager {
   /**
    * Upload file
    */
-  private validateLocalPath(localPath: string): string {
-    const resolvedPath = path.resolve(localPath);
-    const allowedRoots = new Set<string>([process.cwd()]);
-
-    for (const config of Object.values(this.configs)) {
-      for (const allowedPath of config.allowedLocalPaths || []) {
-        allowedRoots.add(path.resolve(allowedPath));
-      }
+  private validateLocalPath(
+    localPath: string,
+    name?: string,
+    purpose: LocalPathPurpose = "read",
+  ): string {
+    if (typeof localPath !== "string" || localPath.length === 0) {
+      throw new ToolError(
+        "LOCAL_PATH_NOT_ALLOWED",
+        "Local path must be a non-empty string.",
+        false,
+      );
+    }
+    if (localPath.includes("\0")) {
+      throw new ToolError(
+        "LOCAL_PATH_NOT_ALLOWED",
+        "Local path must not contain null bytes.",
+        false,
+      );
     }
 
-    const isAllowed = Array.from(allowedRoots).some(
-      (allowedRoot) =>
-        resolvedPath === allowedRoot ||
-        resolvedPath.startsWith(`${allowedRoot}${path.sep}`),
+    const resolvedPath = path.resolve(localPath);
+    const allowedRoots = this.getAllowedLocalRoots(name);
+    const parentPath = path.dirname(resolvedPath);
+    const existingPath = this.tryRealpath(resolvedPath);
+    const parentRealPath = this.tryRealpath(parentPath);
+
+    let pathToCheck = existingPath;
+    if (!pathToCheck && parentRealPath) {
+      pathToCheck = path.join(parentRealPath, path.basename(resolvedPath));
+    }
+    if (!pathToCheck) {
+      pathToCheck = resolvedPath;
+    }
+
+    if (purpose === "write" && !parentRealPath) {
+      throw new ToolError(
+        "LOCAL_PATH_NOT_ALLOWED",
+        "Local path parent directory must exist and be within an allowed local path.",
+        false,
+      );
+    }
+
+    const isAllowed = allowedRoots.some((allowedRoot) =>
+      isPathWithinRoot(pathToCheck, allowedRoot),
     );
 
     if (!isAllowed) {
       throw new ToolError(
         "LOCAL_PATH_NOT_ALLOWED",
-        "Path traversal detected. Local path must be within the working directory or configured allowed local paths.",
+        "Path traversal detected. Local path must be within the working directory or configured allowed local paths for this connection.",
         false,
       );
     }
     return resolvedPath;
+  }
+
+  private getAllowedLocalRoots(name?: string): string[] {
+    const config = this.getConfig(name);
+    return [process.cwd(), ...(config.allowedLocalPaths || [])]
+      .filter((allowedPath) => allowedPath.trim().length > 0)
+      .map((allowedPath) => {
+        const resolvedRoot = path.resolve(allowedPath);
+        return this.tryRealpath(resolvedRoot) || resolvedRoot;
+      });
+  }
+
+  private tryRealpath(localPath: string): string | undefined {
+    try {
+      return fs.realpathSync.native(localPath);
+    } catch {
+      return undefined;
+    }
   }
 
   private validateRemotePath(remotePath: string, name?: string): string {
@@ -343,59 +449,33 @@ export class SSHConnectionManager {
       );
     }
 
-    const validatedLocalPath = this.validateLocalPath(localPath);
+    const validatedLocalPath = this.validateLocalPath(localPath, name, "read");
     const validatedRemotePath = this.validateRemotePath(remotePath, name);
     const client = await this.ensureConnected(name);
+    const sftp = await this.openSftp(client);
 
-    return new Promise<string>((resolve, reject) => {
-      client.sftp((err: Error | undefined, sftp: SFTPWrapper) => {
-        if (err) {
-          return reject(
-            new ToolError(
-              "SFTP_ERROR",
-              `SFTP connection failed: ${err.message}`,
-              true,
-            ),
-          );
-        }
-
-        const readStream = fs.createReadStream(validatedLocalPath);
-        const writeStream = sftp.createWriteStream(validatedRemotePath);
-
-        const cleanup = () => {
-          sftp.end();
-        };
-
-        writeStream.on("close", () => {
-          cleanup();
-          resolve("File uploaded successfully");
-        });
-
-        writeStream.on("error", (streamError: Error) => {
-          cleanup();
-          reject(
-            new ToolError(
-              "SFTP_ERROR",
-              `File upload failed: ${streamError.message}`,
-              true,
-            ),
-          );
-        });
-
-        readStream.on("error", (streamError: Error) => {
-          cleanup();
-          reject(
-            new ToolError(
-              "LOCAL_FILE_READ_FAILED",
-              `Failed to read local file: ${streamError.message}`,
-              false,
-            ),
-          );
-        });
-
-        readStream.pipe(writeStream);
-      });
-    });
+    try {
+      await pipeline(
+        fs.createReadStream(validatedLocalPath),
+        sftp.createWriteStream(validatedRemotePath),
+      );
+      return "File uploaded successfully";
+    } catch (error) {
+      if (this.errorPathMatches(error, validatedLocalPath)) {
+        throw new ToolError(
+          "LOCAL_FILE_READ_FAILED",
+          `Failed to read local file: ${(error as Error).message}`,
+          false,
+        );
+      }
+      throw new ToolError(
+        "SFTP_ERROR",
+        `File upload failed: ${(error as Error).message}`,
+        true,
+      );
+    } finally {
+      this.closeSftp(sftp);
+    }
   }
 
   /**
@@ -415,59 +495,86 @@ export class SSHConnectionManager {
       );
     }
 
-    const validatedLocalPath = this.validateLocalPath(localPath);
+    const validatedLocalPath = this.validateLocalPath(localPath, name, "write");
     const validatedRemotePath = this.validateRemotePath(remotePath, name);
     const client = await this.ensureConnected(name);
+    const sftp = await this.openSftp(client);
+    const tempLocalPath = `${validatedLocalPath}.tmp-${process.pid}-${Date.now()}-${Math.random()
+      .toString(16)
+      .slice(2)}`;
 
-    return new Promise<string>((resolve, reject) => {
+    try {
+      await pipeline(
+        sftp.createReadStream(validatedRemotePath),
+        fs.createWriteStream(tempLocalPath, { flags: "wx" }),
+      );
+      await fs.promises.rename(tempLocalPath, validatedLocalPath);
+      return "File downloaded successfully";
+    } catch (error) {
+      await this.unlinkIfExists(tempLocalPath);
+      if (
+        this.errorPathMatches(error, tempLocalPath) ||
+        this.errorPathMatches(error, validatedLocalPath)
+      ) {
+        throw new ToolError(
+          "LOCAL_FILE_WRITE_FAILED",
+          `Failed to save file: ${(error as Error).message}`,
+          false,
+        );
+      }
+      throw new ToolError(
+        "SFTP_ERROR",
+        `File download failed: ${(error as Error).message}`,
+        true,
+      );
+    } finally {
+      this.closeSftp(sftp);
+    }
+  }
+
+  private openSftp(client: Client): Promise<SFTPWrapper> {
+    return new Promise<SFTPWrapper>((resolve, reject) => {
       client.sftp((err: Error | undefined, sftp: SFTPWrapper) => {
         if (err) {
-          return reject(
+          reject(
             new ToolError(
               "SFTP_ERROR",
               `SFTP connection failed: ${err.message}`,
               true,
             ),
           );
+          return;
         }
 
-        const readStream = sftp.createReadStream(validatedRemotePath);
-        const writeStream = fs.createWriteStream(validatedLocalPath);
-
-        const cleanup = () => {
-          sftp.end();
-        };
-
-        writeStream.on("finish", () => {
-          cleanup();
-          resolve("File downloaded successfully");
-        });
-
-        writeStream.on("error", (streamError: Error) => {
-          cleanup();
-          reject(
-            new ToolError(
-              "LOCAL_FILE_WRITE_FAILED",
-              `Failed to save file: ${streamError.message}`,
-              false,
-            ),
-          );
-        });
-
-        readStream.on("error", (streamError: Error) => {
-          cleanup();
-          reject(
-            new ToolError(
-              "SFTP_ERROR",
-              `File download failed: ${streamError.message}`,
-              true,
-            ),
-          );
-        });
-
-        readStream.pipe(writeStream);
+        resolve(sftp);
       });
     });
+  }
+
+  private closeSftp(sftp: SFTPWrapper): void {
+    try {
+      sftp.end();
+    } catch {
+      // Ignore cleanup errors after transfer completion.
+    }
+  }
+
+  private errorPathMatches(error: unknown, localPath: string): boolean {
+    const errorPath = (error as NodeJS.ErrnoException).path;
+    return typeof errorPath === "string" && path.resolve(errorPath) === localPath;
+  }
+
+  private async unlinkIfExists(localPath: string): Promise<void> {
+    try {
+      await fs.promises.unlink(localPath);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+        Logger.log(
+          `Failed to remove partial local file ${localPath}: ${(error as Error).message}`,
+          "error",
+        );
+      }
+    }
   }
 
   /**
@@ -585,19 +692,40 @@ export class SSHConnectionManager {
       try {
         const proxyUrl = new URL(config.socksProxy);
         const proxyHost = proxyUrl.hostname;
-        const proxyPort = parseInt(proxyUrl.port, 10);
+        const proxyPort = Number.parseInt(proxyUrl.port, 10);
+
+        if (!proxyHost || !Number.isInteger(proxyPort) || proxyPort <= 0) {
+          throw new Error(
+            "SOCKS proxy URL must include a valid host and positive port",
+          );
+        }
+
+        const proxy: {
+          host: string;
+          port: number;
+          type: 5;
+          userId?: string;
+          password?: string;
+        } = {
+          host: proxyHost,
+          port: proxyPort,
+          type: 5,
+        };
+
+        if (proxyUrl.username) {
+          proxy.userId = decodeURIComponent(proxyUrl.username);
+        }
+        if (proxyUrl.password) {
+          proxy.password = decodeURIComponent(proxyUrl.password);
+        }
 
         Logger.log(
-          `Using SOCKS proxy for [${key}]: ${config.socksProxy}`,
+          `Using SOCKS proxy for [${key}]: ${redactProxyUrl(proxyUrl)}`,
           "info",
         );
 
         const { socket } = await SocksClient.createConnection({
-          proxy: {
-            host: proxyHost,
-            port: proxyPort,
-            type: 5,
-          },
+          proxy,
           command: "connect",
           destination: {
             host: config.host,
@@ -792,30 +920,31 @@ export class SSHConnectionManager {
 
     const timeoutId = setTimeout(() => {
       this.pendingStatusCollections.delete(key);
-      collectSystemStatus(
-        (command, connectionName) =>
-          this.runCommandInternal(command, undefined, connectionName, {
-            bypassValidation: true,
-          }),
-        key,
-      )
-        .then((status) => {
-          this.statusCache.set(key, status);
-          Logger.log(`System status collected for [${key}]`, "info");
-        })
-        .catch((error) => {
-          Logger.log(
-            `Failed to collect system status for [${key}]: ${(error as Error).message}`,
-            "error",
-          );
-          this.statusCache.set(key, {
-            reachable: true,
-            lastUpdated: new Date().toISOString(),
-          });
-        });
+      void this.collectStatusForConnection(key);
     }, 1000);
 
     this.pendingStatusCollections.set(key, timeoutId);
+  }
+
+  private async collectStatusForConnection(key: string): Promise<void> {
+    try {
+      const status = await collectSystemStatus(
+        (command, connectionName) =>
+          this.runCommandInternal(command, undefined, connectionName),
+        key,
+      );
+      this.statusCache.set(key, status);
+      Logger.log(`System status collected for [${key}]`, "info");
+    } catch (error) {
+      Logger.log(
+        `Failed to collect system status for [${key}]: ${(error as Error).message}`,
+        "error",
+      );
+      this.statusCache.set(key, {
+        reachable: true,
+        lastUpdated: new Date().toISOString(),
+      });
+    }
   }
 
   private compilePatterns(
@@ -907,15 +1036,13 @@ export class SSHConnectionManager {
     name?: string,
     options: RunCommandOptions = {},
   ): Promise<string> {
-    if (!options.bypassValidation) {
-      const validationResult = this.validateCommand(cmdString, name);
-      if (!validationResult.isAllowed) {
-        throw new ToolError(
-          "COMMAND_VALIDATION_FAILED",
-          `Command validation failed: ${validationResult.reason}`,
-          false,
-        );
-      }
+    const validationResult = this.validateCommand(cmdString, name);
+    if (!validationResult.isAllowed) {
+      throw new ToolError(
+        "COMMAND_VALIDATION_FAILED",
+        `Command validation failed: ${validationResult.reason}`,
+        false,
+      );
     }
 
     const client = await this.ensureConnected(name);

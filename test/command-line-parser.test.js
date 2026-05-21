@@ -3,6 +3,7 @@ import assert from 'node:assert';
 import { CommandLineParser } from '../build/cli/command-line-parser.js';
 import * as fs from 'fs';
 import * as path from 'path';
+import * as os from 'os';
 import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -72,7 +73,7 @@ Host testhost
       assert.strictEqual(Object.keys(result.configs).length, 2);
       assert.strictEqual(result.configs.dev.host, '192.168.1.100');
       assert.strictEqual(result.configs.dev.username, 'devuser');
-      assert.strictEqual(result.configs.prod.privateKey, '~/.ssh/prod_key');
+      assert.strictEqual(result.configs.prod.privateKey, path.join(os.homedir(), '.ssh', 'prod_key'));
     });
 
     it('应该正确解析 JSON 配置文件（数组格式）', () => {
@@ -179,7 +180,7 @@ Host testhost
       process.argv = ['node', 'test', '--host', '1.2.3.4', '--port', '22', '--username', 'testuser', '--privateKey', '~/.ssh/id_rsa'];
       const result = CommandLineParser.parseArgs();
 
-      assert.strictEqual(result.configs.default.privateKey, '~/.ssh/id_rsa');
+      assert.strictEqual(result.configs.default.privateKey, path.join(os.homedir(), '.ssh', 'id_rsa'));
       assert.strictEqual(result.configs.default.password, undefined);
     });
 
@@ -304,12 +305,13 @@ Host testhost
     });
 
     it('应该正确解析 allowed local paths', () => {
-      process.argv = ['node', 'test', '--host', '1.2.3.4', '--port', '22', '--username', 'user', '--password', 'pass', '--allowed-local-paths', './tmp,../ssh-mcp-server/test'];
+      process.argv = ['node', 'test', '--host', '1.2.3.4', '--port', '22', '--username', 'user', '--password', 'pass', '--allowed-local-paths', './tmp,~/.ssh'];
       const result = CommandLineParser.parseArgs();
 
       assert.ok(Array.isArray(result.configs.default.allowedLocalPaths));
       assert.strictEqual(result.configs.default.allowedLocalPaths.length, 2);
       assert.ok(result.configs.default.allowedLocalPaths.every((entry) => entry.startsWith('/')));
+      assert.strictEqual(result.configs.default.allowedLocalPaths[1], path.join(os.homedir(), '.ssh'));
     });
 
     it('应该正确解析 allowed remote paths', () => {
@@ -343,6 +345,26 @@ Host testhost
       const result = CommandLineParser.parseArgs();
 
       assert.strictEqual(result.configs.dev.commandTemplate, "su root -c '<command>'");
+
+      fs.unlinkSync(templateConfigPath);
+    });
+
+    it('应该支持 commandTemplate 的 <quotedCommand> 占位符', () => {
+      const templateConfigPath = path.join(__dirname, 'fixtures', 'quoted-template-config.json');
+      fs.writeFileSync(templateConfigPath, JSON.stringify({
+        dev: {
+          host: '192.168.1.100',
+          port: 22,
+          username: 'devuser',
+          password: 'devpass',
+          commandTemplate: "su root -c <quotedCommand>"
+        }
+      }));
+
+      process.argv = ['node', 'test', '--config-file', templateConfigPath];
+      const result = CommandLineParser.parseArgs();
+
+      assert.strictEqual(result.configs.dev.commandTemplate, "su root -c <quotedCommand>");
 
       fs.unlinkSync(templateConfigPath);
     });

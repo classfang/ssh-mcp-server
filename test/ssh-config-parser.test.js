@@ -124,6 +124,48 @@ describe('SSH Config Parser', () => {
       assert.strictEqual(config.port, 22);
       assert.strictEqual(config.hostName, undefined);
     });
+
+    it('通配符匹配应转义正则特殊字符', () => {
+      const tempConfig = path.join(fixturesDir, 'special-pattern-config');
+      fs.writeFileSync(tempConfig, [
+        'Host host[1]',
+        '    User literaluser',
+        '',
+        'Host *',
+        '    User defaultuser',
+      ].join('\n'));
+
+      const literalConfig = lookupSshConfig('host[1]', tempConfig);
+      const regexLikeConfig = lookupSshConfig('host1', tempConfig);
+
+      assert.ok(literalConfig);
+      assert.strictEqual(literalConfig.user, 'literaluser');
+      assert.ok(regexLikeConfig);
+      assert.strictEqual(regexLikeConfig.user, 'defaultuser');
+
+      fs.unlinkSync(tempConfig);
+    });
+
+    it('应该支持 Host 中的否定模式', () => {
+      const tempConfig = path.join(fixturesDir, 'negated-pattern-config');
+      fs.writeFileSync(tempConfig, [
+        'Host *.example.com !blocked.example.com',
+        '    User wildcarduser',
+        '',
+        'Host *',
+        '    User defaultuser',
+      ].join('\n'));
+
+      const allowedConfig = lookupSshConfig('app.example.com', tempConfig);
+      const blockedConfig = lookupSshConfig('blocked.example.com', tempConfig);
+
+      assert.ok(allowedConfig);
+      assert.strictEqual(allowedConfig.user, 'wildcarduser');
+      assert.ok(blockedConfig);
+      assert.strictEqual(blockedConfig.user, 'defaultuser');
+
+      fs.unlinkSync(tempConfig);
+    });
   });
 
   describe('Include 指令', () => {
