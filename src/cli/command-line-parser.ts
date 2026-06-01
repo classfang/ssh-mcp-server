@@ -100,29 +100,51 @@ export class CommandLineParser {
 
     const configMap: SshConnectionConfigMap = {};
 
-    // Priority 1: Load from config file if specified
-    if (values["config-file"]) {
-      const configFilePath = path.resolve(values["config-file"]);
-      if (!fs.existsSync(configFilePath)) {
-        throw new Error(`Config file not found: ${configFilePath}`);
+    // Default config file paths
+    const configFileArg = values["config-file"];
+    const sshConfigFile = values["ssh-config-file"] || path.join(os.homedir(), ".ssh", "config");
+    const configFile = configFileArg || path.join(os.homedir(), ".ssh", "mcp-config.json");
+
+    // Priority 1: Load from config file if specified (or use default if exists)
+    if (configFileArg || fs.existsSync(configFile)) {
+      if (!fs.existsSync(configFile)) {
+        throw new Error(`Config file not found: ${configFile}`);
       }
       try {
-        const configContent = fs.readFileSync(configFilePath, "utf-8");
+        const configContent = fs.readFileSync(configFile, "utf-8");
         const fileConfig = JSON.parse(configContent);
-        
+
         // Support both array format and object format
         if (Array.isArray(fileConfig)) {
           // Array format: [{name: "dev", host: "...", ...}, ...]
           for (const config of fileConfig) {
-            if (!config.name || !config.host || !config.port || !config.username) {
-              throw new Error("Each config in array must include name, host, port, username");
+            if (!config.name) {
+              throw new Error("Each config in array must include name");
             }
-            configMap[config.name] = this.normalizeConfig(config);
+            // Enrich config from ssh config if missing
+            const enrichedConfig = this.enrichFromSshConfig(config, sshConfigFile);
+            // Validate required fields after enrichment
+            if (!enrichedConfig.host || !enrichedConfig.username) {
+              throw new Error(
+                `Config "${config.name}" is missing required fields (host, username). ` +
+                `Ensure they are specified in the config file or available in ${sshConfigFile}.`
+              );
+            }
+            configMap[config.name] = this.normalizeConfig(enrichedConfig);
           }
         } else if (typeof fileConfig === "object" && fileConfig !== null) {
           // Object format: {"dev": {host: "...", ...}, "prod": {...}}
           for (const [name, config] of Object.entries(fileConfig)) {
-            const normalizedConfig = this.normalizeConfig(config as any);
+            // Enrich config from ssh config if missing
+            const enrichedConfig = this.enrichFromSshConfig({ name, ...config as any }, sshConfigFile);
+            // Validate required fields after enrichment
+            if (!enrichedConfig.host || !enrichedConfig.username) {
+              throw new Error(
+                `Config "${name}" is missing required fields (host, username). ` +
+                `Ensure they are specified in the config file or available in ${sshConfigFile}.`
+              );
+            }
+            const normalizedConfig = this.normalizeConfig(enrichedConfig);
             normalizedConfig.name = name;
             configMap[name] = normalizedConfig;
           }
@@ -179,7 +201,7 @@ export class CommandLineParser {
       let sshConfigEntry = null;
       if (host) {
         try {
-          sshConfigEntry = lookupSshConfig(host, values["ssh-config-file"]);
+          sshConfigEntry = lookupSshConfig(host, sshConfigFile);
         } catch (err) {
           // 显式指定配置文件但读取失败时抛错
           throw err;
@@ -259,6 +281,66 @@ export class CommandLineParser {
       configs: configMap,
       preConnect: values["pre-connect"] === true,
     };
+  }
+
+  /**
+   * Enrich config from SSH config when connection params are missing
+   * @param config Original config object (must include name)
+   * @param sshConfigFilePath Optional SSH config file path
+   * @private
+   */
+  private static enrichFromSshConfig(config: any, sshConfigFilePath?: string): any {
+    const name = config.name;
+    if (!name) {
+      return config;
+    }
+
+    // Skip if no SSH config file path or file doesn't exist
+    if (!sshConfigFilePath || !fs.existsSync(sshConfigFilePath)) {
+      return config;
+    }
+
+    // Get config from SSH config
+    const sshConfigEntry = lookupSshConfig(name, sshConfigFilePath);
+
+    if (!sshConfigEntry) {
+      return config;
+    }
+
+    // Enrich missing fields
+    const enriched = { ...config };
+
+    if (!enriched.host && sshConfigEntry.hostName) {
+      enriched.host = sshConfigEntry.hostName;
+    }
+    if (!enriched.port && sshConfigEntry.port) {
+      enriched.port = sshConfigEntry.port;
+    }
+    // Default SSH port is 22
+    if (!enriched.port) {
+      enriched.port = 22;
+    }
+    if (!enriched.username && sshConfigEntry.user) {
+      enriched.username = sshConfigEntry.user;
+    }
+    if (!enriched.privateKey && sshConfigEntry.identityFile) {
+      enriched.privateKey = sshConfigEntry.identityFile;
+    }
+
+    // Try default SSH private keys if not specified
+    if (!enriched.privateKey) {
+      const defaultKeys = ["id_ed25519", "id_rsa", "id_ecdsa"].map(
+        (f) => path.join(os.homedir(), ".ssh", f)
+      );
+      for (const key of defaultKeys) {
+        if (fs.existsSync(key)) {
+          enriched.privateKey = key;
+          break;
+        }
+      }
+    }
+
+    return enriched;
   }
 
   /**
