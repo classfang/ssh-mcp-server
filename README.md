@@ -355,7 +355,31 @@ When you need to expose more than one SSH target through the same MCP server, re
 
 Create a JSON configuration file (e.g., `ssh-config.json`):
 
-**Array Format:**
+**If your servers are already configured in `~/.ssh/config`, you can only specify server names:**
+
+```json
+{
+  "dev": {},
+  "staging": {},
+  "prod": {}
+}
+```
+
+The system will automatically read `HostName`, `User`, `Port`, `IdentityFile` and other parameters from `~/.ssh/config` for matching hosts. No need to repeat connection details. Your config file only manages the server names.
+
+If a server needs extra config (like a command whitelist), add it to the object:
+
+```json
+{
+  "dev": {},
+  "prod": {
+    "commandWhitelist": ["ls", "cat", "grep"]
+  }
+}
+```
+
+Full config example:
+
 ```json
 [
   {
@@ -400,6 +424,45 @@ Create a JSON configuration file (e.g., `ssh-config.json`):
 ```
 
 **Object Format:**
+```json
+{
+  "dev": {
+    "host": "1.2.3.4",
+    "port": 22,
+    "username": "alice",
+    "password": "{abc=P100s0}",
+    "socksProxy": "socks://127.0.0.1:10808"
+  },
+  "bastion": {
+    "host": "9.9.9.9",
+    "port": 22,
+    "username": "ops",
+    "password": "pwd123456",
+    "transportMode": "shell",
+    "shellReadyTimeoutMs": 15000,
+    "shellCommandTimeoutMs": 45000
+  },
+  "prod": {
+    "host": "5.6.7.8",
+    "port": 22,
+    "username": "bob",
+    "password": "yyy",
+    "socksProxy": "socks://127.0.0.1:10808"
+  }
+}
+```
+
+**Object format (simple names only):**
+
+```json
+{
+  "dev": {},
+  "prod": {}
+}
+```
+
+Or with extra config:
+
 ```json
 {
   "dev": {
