@@ -355,7 +355,17 @@ When you need to expose more than one SSH target through the same MCP server, re
 
 Create a JSON configuration file (e.g., `ssh-config.json`):
 
-**If your servers are already configured in `~/.ssh/config`, you can only specify server names:**
+**Array format** (servers already configured in `~/.ssh/config`):
+
+```json
+[
+  { "name": "dev" },
+  { "name": "staging" },
+  { "name": "prod" }
+]
+```
+
+**Object format** (same behavior):
 
 ```json
 {
@@ -369,6 +379,15 @@ The system will automatically read `HostName`, `User`, `Port`, `IdentityFile` an
 
 If a server needs extra config (like a command whitelist), add it to the object:
 
+**Array format:**
+```json
+[
+  { "name": "dev" },
+  { "name": "prod", "commandWhitelist": ["ls", "cat", "grep"] }
+]
+```
+
+**Object format:**
 ```json
 {
   "dev": {},
