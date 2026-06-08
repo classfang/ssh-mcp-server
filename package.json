@@ -4,6 +4,14 @@
   "description": "SSH-based MCP Server (基于 SSH 的 MCP 服务器)",
   "main": "build/index.js",
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/classfang/ssh-mcp-server.git"
+  },
+  "bugs": {
+    "url": "https://github.com/classfang/ssh-mcp-server/issues"
+  },
+  "homepage": "https://github.com/classfang/ssh-mcp-server#readme",
   "bin": {
     "ssh-mcp-server": "build/index.js"
   },
