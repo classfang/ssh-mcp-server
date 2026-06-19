@@ -1,3 +1,5 @@
+[![MseeP.ai Security Assessment Badge](https://mseep.net/pr/classfang-ssh-mcp-server-badge.png)](https://mseep.ai/app/classfang-ssh-mcp-server)
+
 # 🔐 ssh-mcp-server
 
 ![NPM Version](https://img.shields.io/npm/v/%40fangjunjie%2Fssh-mcp-server?label=%40fangjunjie%2Fssh-mcp-server)
