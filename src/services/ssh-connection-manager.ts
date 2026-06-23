@@ -24,6 +24,14 @@ type ShellCommandMatch = {
   remainder: string;
 };
 
+type SshAuthMethod =
+  | "none"
+  | "password"
+  | "publickey"
+  | "agent"
+  | "keyboard-interactive"
+  | "hostbased";
+
 const ANSI_OSC_PATTERN = /\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)/g;
 const ANSI_CSI_PATTERN = /\u001b\[[0-?]*[ -/]*[@-~]/g;
 
@@ -70,6 +78,27 @@ function redactProxyUrl(proxyUrl: URL): string {
     redactedUrl.password = "***";
   }
   return redactedUrl.toString();
+}
+
+function isPasswordPrompt(prompt: string): boolean {
+  const promptText = prompt.toLowerCase();
+  return promptText.includes("password") || promptText.includes("密码");
+}
+
+function isAuthMethodAllowedByServer(
+  method: SshAuthMethod,
+  methodsLeft: string[] | null,
+): boolean {
+  if (methodsLeft === null) {
+    return true;
+  }
+
+  // ssh-agent uses the SSH publickey protocol method.
+  if (method === "agent") {
+    return methodsLeft.includes("publickey");
+  }
+
+  return methodsLeft.includes(method);
 }
 
 /**
@@ -855,37 +884,42 @@ export class SSHConnectionManager {
       sshConfig.tryKeyboard = true;
 
       // Build ordered preference of methods this connection supports.
-      const authMethods: string[] = [];
-      if (config.privateKey || config.agent) {
+      const authMethods: SshAuthMethod[] = [];
+      if (config.privateKey) {
         authMethods.push("publickey");
+      }
+      if (config.agent) {
+        authMethods.push("agent");
       }
       if (config.password) {
         authMethods.push("password");
       }
       authMethods.push("keyboard-interactive");
 
-      const triedMethods: string[] = [];
-      const MAX_AUTH_ATTEMPTS = authMethods.length + 1;
+      const triedMethods: SshAuthMethod[] = [];
+      const maxAuthAttempts = authMethods.length;
 
       sshConfig.authHandler = (
         methodsLeft: string[] | null,
         partialSuccess: boolean | null,
-        callback: (nextAuth: string | string[]) => void,
+        callback: (nextAuth: SshAuthMethod | false) => void,
       ) => {
         // Prevent infinite retry loops.
-        if (triedMethods.length >= MAX_AUTH_ATTEMPTS) {
+        if (triedMethods.length >= maxAuthAttempts) {
           Logger.log(
             `[${key}] Authentication failed after trying [${triedMethods.join(", ")}]`,
             "error",
           );
-          return callback([]);
+          return callback(false);
         }
 
         // Pick the next preferred method that hasn't been attempted yet
         // (and is still allowed by the server if methodsLeft is provided).
         const candidates =
           methodsLeft !== null
-            ? authMethods.filter((m) => methodsLeft.includes(m))
+            ? authMethods.filter((m) =>
+                isAuthMethodAllowedByServer(m, methodsLeft),
+              )
             : authMethods;
 
         const nextMethod = candidates.find(
@@ -897,12 +931,12 @@ export class SSHConnectionManager {
             `[${key}] All supported auth methods exhausted`,
             "error",
           );
-          return callback([]);
+          return callback(false);
         }
 
         triedMethods.push(nextMethod);
         Logger.log(
-          `[${key}] Trying auth method: ${nextMethod} (${triedMethods.length}/${MAX_AUTH_ATTEMPTS})`,
+          `[${key}] Trying auth method: ${nextMethod} (${triedMethods.length}/${maxAuthAttempts})`,
           "info",
         );
         return callback(nextMethod);
@@ -927,23 +961,11 @@ export class SSHConnectionManager {
         const otpCode = process.env.SSH_MCP_2FA_CODE;
         const responses: string[] = [];
         for (const prompt of prompts) {
-          const promptText = prompt.prompt.toLowerCase();
-          // For password prompts, use the configured password
-          if (
-            config.password &&
-            (promptText.includes("password") || promptText.includes("密码"))
-          ) {
+          if (config.password && isPasswordPrompt(prompt.prompt)) {
+            // For password prompts, use the configured password
             responses.push(config.password);
             Logger.log(
               `[${key}] Responding to password prompt: ${prompt.prompt}`,
-              "debug",
-            );
-          } else if (config.password && prompts.length === 1 && !prompt.echo) {
-            // Single non-echoing prompt without "password" label:
-            // treat as password prompt (common on embedded devices)
-            responses.push(config.password);
-            Logger.log(
-              `[${key}] Responding to single non-echo prompt (assumed password): ${prompt.prompt}`,
               "debug",
             );
           } else if (otpCode) {
@@ -952,6 +974,14 @@ export class SSHConnectionManager {
             Logger.log(
               `[${key}] Responding to non-password prompt with SSH_MCP_2FA_CODE: ${prompt.prompt}`,
               "info",
+            );
+          } else if (config.password && prompts.length === 1 && !prompt.echo) {
+            // Single non-echoing prompt without "password" label:
+            // treat as password prompt (common on embedded devices)
+            responses.push(config.password);
+            Logger.log(
+              `[${key}] Responding to single non-echo prompt (assumed password): ${prompt.prompt}`,
+              "debug",
             );
           } else {
             // No code available — empty response will fail the auth attempt;

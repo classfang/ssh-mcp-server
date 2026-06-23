@@ -520,6 +520,114 @@ describe('SSH Connection Manager', () => {
       assert.strictEqual(sshConfig.keepaliveInterval, 5678);
       assert.strictEqual(sshConfig.keepaliveCountMax, 2);
     });
+
+    it('tryKeyboard authHandler 应在认证方法耗尽时返回 false', async () => {
+      const sshConfig = await manager.buildClientConfig(
+        'dev',
+        createPasswordConfig({
+          name: 'dev',
+          tryKeyboard: true,
+        }),
+      );
+
+      const attempts = [];
+      sshConfig.authHandler(null, null, (nextAuth) => attempts.push(nextAuth));
+      sshConfig.authHandler(['password', 'keyboard-interactive'], false, (nextAuth) => attempts.push(nextAuth));
+      sshConfig.authHandler(['password', 'keyboard-interactive'], false, (nextAuth) => attempts.push(nextAuth));
+
+      assert.deepStrictEqual(attempts, ['password', 'keyboard-interactive', false]);
+    });
+
+    it('tryKeyboard authHandler 应区分 agent 与 publickey', async () => {
+      const sshConfig = await manager.buildClientConfig(
+        'agent',
+        createPasswordConfig({
+          name: 'agent',
+          password: undefined,
+          agent: '/tmp/ssh-agent.sock',
+          tryKeyboard: true,
+        }),
+      );
+
+      const attempts = [];
+      sshConfig.authHandler(null, null, (nextAuth) => attempts.push(nextAuth));
+
+      assert.deepStrictEqual(attempts, ['agent']);
+      assert.strictEqual(sshConfig.agent, '/tmp/ssh-agent.sock');
+    });
+
+    it('tryKeyboard authHandler 应在 publickey 仍可用时继续尝试 agent', async () => {
+      const sshConfig = await manager.buildClientConfig(
+        'mixed',
+        createPasswordConfig({
+          name: 'mixed',
+          password: undefined,
+          privateKey: path.join(process.cwd(), 'node_modules/ssh2/test/fixtures/id_rsa'),
+          agent: '/tmp/ssh-agent.sock',
+          tryKeyboard: true,
+        }),
+      );
+
+      const attempts = [];
+      sshConfig.authHandler(null, null, (nextAuth) => attempts.push(nextAuth));
+      sshConfig.authHandler(['publickey', 'keyboard-interactive'], false, (nextAuth) => attempts.push(nextAuth));
+
+      assert.deepStrictEqual(attempts, ['publickey', 'agent']);
+    });
+
+    it('keyboard prompt 有验证码时应优先响应非密码提示', async () => {
+      const originalOtp = process.env.SSH_MCP_2FA_CODE;
+      process.env.SSH_MCP_2FA_CODE = '654321';
+
+      try {
+        const sshConfig = await manager.buildClientConfig(
+          'dev',
+          createPasswordConfig({
+            name: 'dev',
+            tryKeyboard: true,
+          }),
+        );
+
+        let responses;
+        sshConfig.keyboard('', '', '', [{ prompt: 'Verification code: ', echo: false }], (answers) => {
+          responses = answers;
+        });
+
+        assert.deepStrictEqual(responses, ['654321']);
+      } finally {
+        if (originalOtp === undefined) {
+          delete process.env.SSH_MCP_2FA_CODE;
+        } else {
+          process.env.SSH_MCP_2FA_CODE = originalOtp;
+        }
+      }
+    });
+
+    it('keyboard prompt 无验证码时应将单个 non-echo 提示回退为密码', async () => {
+      const originalOtp = process.env.SSH_MCP_2FA_CODE;
+      delete process.env.SSH_MCP_2FA_CODE;
+
+      try {
+        const sshConfig = await manager.buildClientConfig(
+          'dev',
+          createPasswordConfig({
+            name: 'dev',
+            tryKeyboard: true,
+          }),
+        );
+
+        let responses;
+        sshConfig.keyboard('', '', '', [{ prompt: 'Access: ', echo: false }], (answers) => {
+          responses = answers;
+        });
+
+        assert.deepStrictEqual(responses, ['devpass']);
+      } finally {
+        if (originalOtp !== undefined) {
+          process.env.SSH_MCP_2FA_CODE = originalOtp;
+        }
+      }
+    });
   });
 
   describe('Shell transport', () => {
