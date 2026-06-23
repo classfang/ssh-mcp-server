@@ -21,6 +21,7 @@ memo.md
 
 # claude
 .claude/
+.omc/
 .mcp.json
 docs
 
