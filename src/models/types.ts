@@ -14,6 +14,7 @@ export interface SSHConfig {
   commandWhitelist?: string[]; // Command whitelist (array of regex strings)
   commandBlacklist?: string[]; // Command blacklist (array of regex strings)
   socksProxy?: string; // SOCKS proxy URL, e.g. 'socks://user:pass@host:port'
+  algorithms?: Record<string, string[]>; // Custom SSH algorithms (kex, cipher, serverHostKey, hmac, compress)
   pty?: boolean; // Allocate pseudo-tty for command execution, default: true
   allowedLocalPaths?: string[]; // Allowed local paths for upload/download
   allowedRemotePaths?: string[]; // Allowed remote paths for SFTP upload/download (POSIX, absolute)
