@@ -320,6 +320,7 @@ export class CommandLineParser {
         : undefined,
       passphrase: config.passphrase || process.env.SSH_MCP_PASSPHRASE,
       agent: config.agent,
+      algorithms: config.algorithms,
       socksProxy: config.socksProxy,
       pty: this.parseBoolean(config.pty),
       tryKeyboard: this.parseBoolean(config.tryKeyboard),
