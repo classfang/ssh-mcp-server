@@ -521,6 +521,19 @@ describe('SSH Connection Manager', () => {
       assert.strictEqual(sshConfig.keepaliveCountMax, 2);
     });
 
+    it('连接配置应将自定义 SSH algorithms 透传给 ssh2', async () => {
+      const algorithms = {
+        serverHostKey: { append: ['ssh-rsa'] },
+        hmac: ['hmac-sha1', 'hmac-md5'],
+      };
+      const sshConfig = await manager.buildClientConfig(
+        'legacy',
+        createPasswordConfig({ name: 'legacy', algorithms }),
+      );
+
+      assert.deepStrictEqual(sshConfig.algorithms, algorithms);
+    });
+
     it('tryKeyboard authHandler 应在认证方法耗尽时返回 false', async () => {
       const sshConfig = await manager.buildClientConfig(
         'dev',

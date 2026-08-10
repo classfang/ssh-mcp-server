@@ -105,6 +105,32 @@ Host testhost
       fs.unlinkSync(arrayConfigPath);
     });
 
+    it('应该保留 JSON 配置中的 SSH algorithms', () => {
+      const algorithmsConfigPath = path.join(__dirname, 'fixtures', 'algorithms-config.json');
+      const algorithms = {
+        serverHostKey: { append: ['ssh-rsa'] },
+        hmac: ['hmac-sha1', 'hmac-md5']
+      };
+      fs.writeFileSync(algorithmsConfigPath, JSON.stringify({
+        legacy: {
+          host: '192.168.1.100',
+          port: 22,
+          username: 'legacy-user',
+          password: 'legacy-pass',
+          algorithms
+        }
+      }));
+
+      try {
+        process.argv = ['node', 'test', '--config-file', algorithmsConfigPath];
+        const result = CommandLineParser.parseArgs();
+
+        assert.deepStrictEqual(result.configs.legacy.algorithms, algorithms);
+      } finally {
+        fs.unlinkSync(algorithmsConfigPath);
+      }
+    });
+
     it('配置文件不存在时应抛出错误', () => {
       process.argv = ['node', 'test', '--config-file', '/nonexistent/config.json'];
       assert.throws(() => {
