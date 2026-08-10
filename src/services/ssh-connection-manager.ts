@@ -814,6 +814,9 @@ export class SSHConnectionManager {
       keepaliveCountMax:
         config.keepaliveCountMax || DEFAULT_KEEPALIVE_COUNT_MAX,
     };
+    if (config.algorithms) {
+      sshConfig.algorithms = config.algorithms;
+    }
 
     if (config.socksProxy) {
       try {
