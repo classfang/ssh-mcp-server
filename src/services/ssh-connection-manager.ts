@@ -1,5 +1,5 @@
-import { Client, ClientChannel, SFTPWrapper } from "ssh2";
-import { SocksClient } from "socks";
+import { createRequire } from "node:module";
+import type { Client, ClientChannel, SFTPWrapper } from "ssh2";
 import {
   SSHConfig,
   SshConnectionConfigMap,
@@ -11,6 +11,8 @@ import { ToolError } from "../utils/tool-error.js";
 import fs from "fs";
 import path from "path";
 import { pipeline } from "node:stream/promises";
+
+const require = createRequire(import.meta.url);
 
 type RunCommandOptions = {
   timeout?: number;
@@ -747,6 +749,7 @@ export class SSHConnectionManager {
   }
 
   private createClient(): Client {
+    const { Client } = require("ssh2") as typeof import("ssh2");
     return new Client();
   }
 
@@ -820,6 +823,7 @@ export class SSHConnectionManager {
 
     if (config.socksProxy) {
       try {
+        const { SocksClient } = require("socks") as typeof import("socks");
         const proxyUrl = new URL(config.socksProxy);
         const proxyHost = proxyUrl.hostname;
         const proxyPort = Number.parseInt(proxyUrl.port, 10);
