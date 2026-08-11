@@ -581,4 +581,6 @@ This server provides powerful capabilities to execute commands and transfer file
 
 ## 🌟 Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=classfang/ssh-mcp-server&type=date&legend=top-left)](https://www.star-history.com/#classfang/ssh-mcp-server&type=date&legend=top-left)
+## Star History
+
+[![Star History Chart](https://api.star-history.com/chart?repos=classfang/ssh-mcp-server&type=date&legend=top-left&sealed_token=ndORao73xOZgyX7IvlIIOynMoeEP5Ds9YAG-zOfMMBlNepLdP3e7T7k9K94X8TdvuxplN5DXLolbF9jFFsYDD-1V0V8HO6B3swaPOvJaonKeiFNdAuWsXg)](https://www.star-history.com/?type=date&legend=top-left&repos=classfang%2Fssh-mcp-server)
