@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="images/ssh-mcp-server-logo-v2.png" alt="ssh-mcp-server logo" width="220">
+</p>
+
 # 🔐 ssh-mcp-server
 
 ![NPM Version](https://img.shields.io/npm/v/%40fangjunjie%2Fssh-mcp-server?label=%40fangjunjie%2Fssh-mcp-server)
@@ -15,12 +19,6 @@ English Document | [中文文档](README_CN.md)
 ## 📝 Project Overview
 
 ssh-mcp-server is a bridging tool that enables AI assistants and other applications supporting the MCP protocol to execute remote SSH commands through a standardized interface. This allows AI assistants to safely operate remote servers, execute commands, and retrieve results without directly exposing SSH credentials to AI models.
-
-Welcome to join wechat group:
-
-![wx_1.png](images/wx_1.png)
-
-> Scan the code with wechat and reply "Join group".
 
 ## ✨ Key Features
 

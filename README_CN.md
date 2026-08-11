@@ -8,12 +8,6 @@
 
 ssh-mcp-server 是一个桥接工具，可以让 AI 助手等支持 MCP 协议的应用通过标准化接口执行远程 SSH 命令。这使得 AI 助手能够安全地操作远程服务器，执行命令并获取结果，而无需直接暴露 SSH 凭据给 AI 模型。
 
-欢迎加入微信交流群「Agent・Skill・MCP 技术交流社」：
-
-![wx_1.png](images/wx_1.png)
-
-> 微信扫码，回复“加群”即可。
-
 ## ✨ 功能亮点
 
 - **🔒 安全连接**：支持多种安全的 SSH 连接方式，包括密码认证和私钥认证（支持带密码的私钥）
@@ -574,14 +568,6 @@ npx @fangjunjie/ssh-mcp-server \
 - **路径遍历**：服务器内置了对本地文件系统路径遍历攻击的保护。但是，仍然需要注意在 `upload` 和 `download` 命令中使用的路径。
 - **本地传输范围**：默认仅允许访问当前工作目录。只有在明确可信时，才建议通过 `--allowed-local-paths` 或配置文件中的 `allowedLocalPaths` 放宽范围。
 - **远端传输范围**：SFTP upload/download 仅接受绝对 POSIX 路径。未配置 `allowedRemotePaths`（或 `--allowed-remote-paths`）时，任意远端路径都允许，但启动时会打印警告。强烈建议显式配置 `allowedRemotePaths` 白名单，避免模型被 prompt 注入后读写 `~/.ssh/authorized_keys`、`/etc/sshd_config` 之类敏感文件。
-
-## 🎮 演示
-
-### 🖥️ Cursor 接入
-
-![demo_1.png](images/demo_1.png)
-
-![demo_2.png](images/demo_2.png)
 
 ## 🌟 Star 历史
 
