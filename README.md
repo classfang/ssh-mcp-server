@@ -4,6 +4,8 @@
 
 # 🔐 ssh-mcp-server
 
+[![MCP Toplist](https://mcptoplist.com/badge/glama%2Fclassfang%2Fssh-mcp-server.svg)](https://mcptoplist.com/server/glama%2Fclassfang%2Fssh-mcp-server)
+
 ![NPM Version](https://img.shields.io/npm/v/%40fangjunjie%2Fssh-mcp-server?label=%40fangjunjie%2Fssh-mcp-server)
 ![GitHub forks](https://img.shields.io/github/forks/classfang/ssh-mcp-server)
 ![GitHub Repo stars](https://img.shields.io/github/stars/classfang/ssh-mcp-server)
