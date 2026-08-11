@@ -163,9 +163,9 @@ Host myserver
 
 **注意**：命令行参数优先级高于 SSH 配置值。例如，如果你指定了 `--port 2222`，它会覆盖 SSH 配置中的端口。
 
-### 5. 🌐 通过 SOCKS 代理连接
+### 5. 🌐 通过代理连接
 
-当目标主机只能通过 SOCKS 代理访问时：
+当目标主机只能通过代理访问时，可使用 `--proxy` 配置 SOCKS5、HTTP 或 HTTPS 代理。
 
 ```json
 {
@@ -179,12 +179,25 @@ Host myserver
         "--port", "22",
         "--username", "root",
         "--password", "pwd123456",
-        "--socksProxy", "socks://username:password@proxy-host:proxy-port"
+        "--proxy", "http://username:password@proxy-host:proxy-port"
       ]
     }
   }
 }
 ```
+
+支持的 URL 格式：
+
+```text
+socks://username:password@proxy-host:1080
+socks5://username:password@proxy-host:1080
+http://username:password@proxy-host:8080
+https://username:password@proxy-host:8443
+```
+
+HTTP 和 HTTPS 代理通过 `CONNECT` 方法建立到 SSH 服务的隧道，用户名和密码使用 Basic 代理认证。HTTP、HTTPS 未填写端口时分别默认使用 `80`、`443`；SOCKS5 必须填写端口。HTTPS 代理证书使用 Node.js 默认信任链进行验证。
+
+原有 `socksProxy` 配置和 `--socksProxy` 参数继续兼容，但只接受 `socks://` 和 `socks5://`。不要同时配置 `proxy` 和 `socksProxy`。
 
 ### 6. 📝 使用命令白名单 / 黑名单
 
@@ -546,7 +559,8 @@ npx @fangjunjie/ssh-mcp-server \
   --try-keyboard      启用键盘交互式认证以支持 2FA/MFA（默认: false）
   -W, --whitelist     命令白名单，以逗号分隔的正则表达式
   -B, --blacklist     命令黑名单，以逗号分隔的正则表达式
-  -s, --socksProxy    SOCKS 代理地址（如 socks://user:password@host:port）
+  --proxy             代理地址，支持 SOCKS5、HTTP 和 HTTPS
+  -s, --socksProxy    旧版 SOCKS5 代理地址（兼容参数）
   --allowed-local-paths   upload/download 允许访问的额外本地路径，逗号分隔
   --allowed-remote-paths  SFTP upload/download 允许访问的远端路径（POSIX 绝对路径），逗号分隔
   --transport-mode    SSH transport 模式: exec 或 shell（默认: exec）

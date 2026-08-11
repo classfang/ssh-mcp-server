@@ -1,6 +1,8 @@
 import { describe, it, before, afterEach } from 'node:test';
 import assert from 'node:assert';
 import { EventEmitter } from 'node:events';
+import http from 'node:http';
+import https from 'node:https';
 import { Writable } from 'node:stream';
 import { setTimeout as delay } from 'node:timers/promises';
 import * as fs from 'node:fs';
@@ -20,6 +22,48 @@ class FakeExecStream extends EventEmitter {
   close() {
     this.emit('close');
   }
+}
+
+class FakeProxySocket extends EventEmitter {
+  constructor() {
+    super();
+    this.destroyed = false;
+    this.unshifted = [];
+  }
+
+  destroy() {
+    this.destroyed = true;
+  }
+
+  unshift(data) {
+    this.unshifted.push(data);
+  }
+}
+
+function createConnectRequest(options, { statusCode = 200, head = Buffer.alloc(0) } = {}) {
+  const request = new EventEmitter();
+  const socket = new FakeProxySocket();
+  request.options = options;
+  request.socket = socket;
+  request.timeoutMs = undefined;
+  request.timeoutCalls = [];
+  request.setTimeout = (timeoutMs, callback) => {
+    request.timeoutMs = timeoutMs;
+    request.timeoutCalls.push(timeoutMs);
+    request.timeoutCallback = callback;
+    return request;
+  };
+  request.destroy = (error) => {
+    if (error) {
+      request.emit('error', error);
+    }
+  };
+  request.end = () => {
+    queueMicrotask(() => {
+      request.emit('connect', { statusCode }, socket, head);
+    });
+  };
+  return request;
 }
 
 class FakeShellChannel extends EventEmitter {
@@ -463,6 +507,155 @@ describe('SSH Connection Manager', () => {
         SocksClient.createConnection = originalCreateConnection;
         Logger.log = originalLog;
       }
+    });
+
+    it('HTTP 代理应通过 CONNECT 建立隧道并传递 Basic 认证', async () => {
+      const originalRequest = http.request;
+      const originalLog = Logger.log;
+      const logs = [];
+      let proxyRequest;
+
+      http.request = (options) => {
+        proxyRequest = createConnectRequest(options, {
+          head: Buffer.from('SSH-2.0-test'),
+        });
+        return proxyRequest;
+      };
+      Logger.log = (message, level) => {
+        logs.push({ message, level });
+      };
+
+      try {
+        const sshConfig = await manager.buildClientConfig(
+          'http-proxy',
+          createPasswordConfig({
+            name: 'http-proxy',
+            host: 'ssh.internal',
+            proxy: 'http://proxy-user:proxy-pass@proxy.local:8080',
+          }),
+        );
+
+        assert.strictEqual(proxyRequest.options.method, 'CONNECT');
+        assert.strictEqual(proxyRequest.options.hostname, 'proxy.local');
+        assert.strictEqual(proxyRequest.options.port, 8080);
+        assert.strictEqual(proxyRequest.options.path, 'ssh.internal:22');
+        assert.strictEqual(proxyRequest.options.headers.Host, 'ssh.internal:22');
+        assert.strictEqual(
+          proxyRequest.options.headers['Proxy-Authorization'],
+          `Basic ${Buffer.from('proxy-user:proxy-pass').toString('base64')}`,
+        );
+        assert.ok(proxyRequest.timeoutCalls.includes(30000));
+        assert.strictEqual(sshConfig.sock, proxyRequest.socket);
+        assert.deepStrictEqual(proxyRequest.socket.unshifted, [
+          Buffer.from('SSH-2.0-test'),
+        ]);
+        assert.ok(logs.some((entry) => entry.message.includes('proxy.local')));
+        assert.ok(logs.every((entry) => !entry.message.includes('proxy-user')));
+        assert.ok(logs.every((entry) => !entry.message.includes('proxy-pass')));
+      } finally {
+        http.request = originalRequest;
+        Logger.log = originalLog;
+      }
+    });
+
+    it('HTTPS 代理应使用 TLS 代理连接和默认端口 443', async () => {
+      const originalRequest = https.request;
+      let proxyRequest;
+
+      https.request = (options) => {
+        proxyRequest = createConnectRequest(options);
+        return proxyRequest;
+      };
+
+      try {
+        const sshConfig = await manager.buildClientConfig(
+          'https-proxy',
+          createPasswordConfig({
+            name: 'https-proxy',
+            proxy: 'https://proxy.local',
+          }),
+        );
+
+        assert.strictEqual(proxyRequest.options.hostname, 'proxy.local');
+        assert.strictEqual(proxyRequest.options.port, 443);
+        assert.strictEqual(sshConfig.sock, proxyRequest.socket);
+      } finally {
+        https.request = originalRequest;
+      }
+    });
+
+    it('HTTP 代理 CONNECT 非 200 响应应关闭 socket 并返回连接错误', async () => {
+      const originalRequest = http.request;
+      let proxyRequest;
+
+      http.request = (options) => {
+        proxyRequest = createConnectRequest(options, { statusCode: 407 });
+        return proxyRequest;
+      };
+
+      try {
+        await assert.rejects(
+          manager.buildClientConfig(
+            'rejected-proxy',
+            createPasswordConfig({
+              name: 'rejected-proxy',
+              proxy: 'http://proxy.local:8080',
+            }),
+          ),
+          (error) =>
+            error instanceof ToolError &&
+            error.message.includes('HTTP proxy CONNECT failed with status 407'),
+        );
+        assert.strictEqual(proxyRequest.socket.destroyed, true);
+      } finally {
+        http.request = originalRequest;
+      }
+    });
+
+    it('不支持的代理协议应返回明确错误', async () => {
+      await assert.rejects(
+        manager.buildClientConfig(
+          'invalid-proxy',
+          createPasswordConfig({
+            name: 'invalid-proxy',
+            proxy: 'ftp://proxy.local:21',
+          }),
+        ),
+        (error) =>
+          error instanceof ToolError &&
+          error.message.includes("Unsupported proxy protocol 'ftp:'"),
+      );
+    });
+
+    it('旧 socksProxy 配置应拒绝 HTTP 和 HTTPS URL', async () => {
+      await assert.rejects(
+        manager.buildClientConfig(
+          'legacy-http-proxy',
+          createPasswordConfig({
+            name: 'legacy-http-proxy',
+            socksProxy: 'http://proxy.local:8080',
+          }),
+        ),
+        (error) =>
+          error instanceof ToolError &&
+          error.message.includes("'socksProxy' option only supports"),
+      );
+    });
+
+    it('proxy 和 socksProxy 同时配置时应拒绝连接', async () => {
+      await assert.rejects(
+        manager.buildClientConfig(
+          'conflicting-proxy',
+          createPasswordConfig({
+            name: 'conflicting-proxy',
+            proxy: 'http://proxy.local:8080',
+            socksProxy: 'socks://proxy.local:1080',
+          }),
+        ),
+        (error) =>
+          error instanceof ToolError &&
+          error.message.includes("cannot use both 'proxy' and 'socksProxy'"),
+      );
     });
 
     it('connectAll 应尝试所有连接后再汇总失败', async () => {

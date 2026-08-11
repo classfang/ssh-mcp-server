@@ -60,7 +60,7 @@ node --test test/ssh-config-parser.test.js
 - ✅ SSH config 集成
 - ✅ 参数优先级（命令行 > SSH config）
 - ✅ 命令白名单和黑名单
-- ✅ 其他选项（`--pty`, `--pre-connect`, `--socksProxy`）
+- ✅ 其他选项（`--pty`, `--pre-connect`, `--proxy`, `--socksProxy`）
 - ✅ 错误处理
 
 ### 3. SSH Connection Manager 测试

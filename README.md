@@ -175,9 +175,9 @@ You can also specify a custom SSH config file path:
 
 **Note**: Command-line parameters take precedence over SSH config values. For example, if you specify `--port 2222`, it will override the port from SSH config.
 
-### 5. 🌐 Connecting Through a SOCKS Proxy
+### 5. 🌐 Connecting Through a Proxy
 
-When the target host is only reachable through a SOCKS proxy:
+When the target host is only reachable through a proxy, use `--proxy` with a SOCKS5, HTTP, or HTTPS proxy.
 
 ```json
 {
@@ -191,12 +191,25 @@ When the target host is only reachable through a SOCKS proxy:
         "--port", "22",
         "--username", "root",
         "--password", "pwd123456",
-        "--socksProxy", "socks://username:password@proxy-host:proxy-port"
+        "--proxy", "http://username:password@proxy-host:proxy-port"
       ]
     }
   }
 }
 ```
+
+Supported URL formats:
+
+```text
+socks://username:password@proxy-host:1080
+socks5://username:password@proxy-host:1080
+http://username:password@proxy-host:8080
+https://username:password@proxy-host:8443
+```
+
+HTTP and HTTPS proxies use the `CONNECT` method to tunnel to the SSH server, with optional Basic proxy authentication. HTTP and HTTPS default to ports `80` and `443`; SOCKS5 requires an explicit port. HTTPS proxy certificates are verified using the default Node.js trust store.
+
+The existing `socksProxy` configuration and `--socksProxy` option remain supported for backward compatibility, but only accept `socks://` and `socks5://`. Do not configure both `proxy` and `socksProxy`.
 
 ### 6. 📝 Restricting Commands With Whitelist / Blacklist
 
@@ -556,7 +569,8 @@ Options:
   --try-keyboard      Enable keyboard-interactive authentication for 2FA/MFA (default: false)
   -W, --whitelist     Command whitelist, comma-separated regular expressions
   -B, --blacklist     Command blacklist, comma-separated regular expressions
-  -s, --socksProxy    SOCKS proxy server address (e.g., socks://user:password@host:port)
+  --proxy             Proxy URL supporting SOCKS5, HTTP, and HTTPS
+  -s, --socksProxy    Legacy SOCKS5 proxy URL
   --allowed-local-paths   Additional allowed local paths for upload/download, comma-separated
   --allowed-remote-paths  Allowed remote (POSIX, absolute) paths for SFTP upload/download, comma-separated
   --transport-mode    SSH transport mode: exec or shell (default: exec)

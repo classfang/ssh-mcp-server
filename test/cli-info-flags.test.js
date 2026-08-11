@@ -27,6 +27,7 @@ const expectedHelpOptions = [
   '-a, --agent <path>',
   '-W, --whitelist <patterns>',
   '-B, --blacklist <patterns>',
+  '--proxy <url>',
   '-s, --socksProxy <url>',
   '--allowed-local-paths <paths>',
   '--allowed-remote-paths <paths>',

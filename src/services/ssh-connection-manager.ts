@@ -10,6 +10,7 @@ import { collectSystemStatus } from "../utils/status-collector.js";
 import { ToolError } from "../utils/tool-error.js";
 import fs from "fs";
 import path from "path";
+import type { Duplex } from "node:stream";
 import { pipeline } from "node:stream/promises";
 
 const require = createRequire(import.meta.url);
@@ -80,6 +81,30 @@ function redactProxyUrl(proxyUrl: URL): string {
     redactedUrl.password = "***";
   }
   return redactedUrl.toString();
+}
+
+function normalizeUrlHostname(hostname: string): string {
+  if (hostname.startsWith("[") && hostname.endsWith("]")) {
+    return hostname.slice(1, -1);
+  }
+  return hostname;
+}
+
+function formatHostPort(host: string, port: number): string {
+  const formattedHost = host.includes(":") && !host.startsWith("[")
+    ? `[${host}]`
+    : host;
+  return `${formattedHost}:${port}`;
+}
+
+function parseProxyPort(proxyUrl: URL, defaultPort?: number): number {
+  const port = proxyUrl.port
+    ? Number.parseInt(proxyUrl.port, 10)
+    : defaultPort;
+  if (!port || !Number.isInteger(port) || port <= 0 || port > 65535) {
+    throw new Error("Proxy URL must include a valid port");
+  }
+  return port;
 }
 
 function isPasswordPrompt(prompt: string): boolean {
@@ -802,6 +827,123 @@ export class SSHConnectionManager {
     return config.sftpTimeoutMs || DEFAULT_SFTP_TIMEOUT_MS;
   }
 
+  private async createSocksProxySocket(
+    proxyUrl: URL,
+    config: SSHConfig,
+  ): Promise<Duplex> {
+    const { SocksClient } = require("socks") as typeof import("socks");
+    const proxyHost = normalizeUrlHostname(proxyUrl.hostname);
+    const proxyPort = parseProxyPort(proxyUrl);
+    if (!proxyHost) {
+      throw new Error("Proxy URL must include a host");
+    }
+
+    const proxy: {
+      host: string;
+      port: number;
+      type: 5;
+      userId?: string;
+      password?: string;
+    } = {
+      host: proxyHost,
+      port: proxyPort,
+      type: 5,
+    };
+
+    if (proxyUrl.username) {
+      proxy.userId = decodeURIComponent(proxyUrl.username);
+    }
+    if (proxyUrl.password) {
+      proxy.password = decodeURIComponent(proxyUrl.password);
+    }
+
+    const { socket } = await SocksClient.createConnection({
+      proxy,
+      command: "connect",
+      destination: {
+        host: config.host,
+        port: config.port,
+      },
+      timeout: this.getConnectionTimeoutMs(config),
+    });
+    return socket;
+  }
+
+  private createHttpProxySocket(
+    proxyUrl: URL,
+    config: SSHConfig,
+  ): Promise<Duplex> {
+    const isTlsProxy = proxyUrl.protocol === "https:";
+    const proxyHost = normalizeUrlHostname(proxyUrl.hostname);
+    const proxyPort = parseProxyPort(proxyUrl, isTlsProxy ? 443 : 80);
+    if (!proxyHost) {
+      throw new Error("Proxy URL must include a host");
+    }
+
+    const destination = formatHostPort(config.host, config.port);
+    const headers: Record<string, string> = { Host: destination };
+    if (proxyUrl.username || proxyUrl.password) {
+      const username = decodeURIComponent(proxyUrl.username);
+      const password = decodeURIComponent(proxyUrl.password);
+      headers["Proxy-Authorization"] = `Basic ${Buffer.from(
+        `${username}:${password}`,
+      ).toString("base64")}`;
+    }
+
+    return new Promise<Duplex>((resolve, reject) => {
+      const options = {
+        method: "CONNECT",
+        hostname: proxyHost,
+        port: proxyPort,
+        path: destination,
+        headers,
+      };
+      const proxyRequest = isTlsProxy
+        ? (require("node:https") as typeof import("node:https")).request(options)
+        : (require("node:http") as typeof import("node:http")).request(options);
+
+      proxyRequest.once("connect", (response, socket, head) => {
+        proxyRequest.setTimeout(0);
+        if (response.statusCode !== 200) {
+          socket.destroy();
+          reject(
+            new Error(
+              `HTTP proxy CONNECT failed with status ${response.statusCode ?? "unknown"}`,
+            ),
+          );
+          return;
+        }
+        if (head.length > 0) {
+          socket.unshift(head);
+        }
+        resolve(socket);
+      });
+      proxyRequest.once("error", reject);
+      proxyRequest.setTimeout(this.getConnectionTimeoutMs(config), () => {
+        proxyRequest.destroy(new Error("HTTP proxy CONNECT timed out"));
+      });
+      proxyRequest.end();
+    });
+  }
+
+  private async createProxySocket(
+    proxyUrl: URL,
+    config: SSHConfig,
+  ): Promise<Duplex> {
+    switch (proxyUrl.protocol) {
+      case "socks:":
+      case "socks5:":
+        return this.createSocksProxySocket(proxyUrl, config);
+      case "http:":
+      case "https:":
+        return this.createHttpProxySocket(proxyUrl, config);
+      default:
+        throw new Error(
+          `Unsupported proxy protocol '${proxyUrl.protocol}'. Use socks://, socks5://, http://, or https://`,
+        );
+    }
+  }
+
   private async buildClientConfig(
     key: string,
     config: SSHConfig,
@@ -821,55 +963,34 @@ export class SSHConnectionManager {
       sshConfig.algorithms = config.algorithms;
     }
 
-    if (config.socksProxy) {
-      try {
-        const { SocksClient } = require("socks") as typeof import("socks");
-        const proxyUrl = new URL(config.socksProxy);
-        const proxyHost = proxyUrl.hostname;
-        const proxyPort = Number.parseInt(proxyUrl.port, 10);
+    if (config.proxy && config.socksProxy) {
+      throw new ToolError(
+        "SSH_CONNECTION_FAILED",
+        `Proxy configuration for [${key}] cannot use both 'proxy' and 'socksProxy'`,
+        false,
+      );
+    }
 
-        if (!proxyHost || !Number.isInteger(proxyPort) || proxyPort <= 0) {
+    const proxyValue = config.proxy || config.socksProxy;
+    if (proxyValue) {
+      try {
+        const proxyUrl = new URL(proxyValue);
+        if (
+          config.socksProxy &&
+          proxyUrl.protocol !== "socks:" &&
+          proxyUrl.protocol !== "socks5:"
+        ) {
           throw new Error(
-            "SOCKS proxy URL must include a valid host and positive port",
+            "The legacy 'socksProxy' option only supports socks:// or socks5:// URLs; use 'proxy' for HTTP or HTTPS proxies",
           );
         }
-
-        const proxy: {
-          host: string;
-          port: number;
-          type: 5;
-          userId?: string;
-          password?: string;
-        } = {
-          host: proxyHost,
-          port: proxyPort,
-          type: 5,
-        };
-
-        if (proxyUrl.username) {
-          proxy.userId = decodeURIComponent(proxyUrl.username);
-        }
-        if (proxyUrl.password) {
-          proxy.password = decodeURIComponent(proxyUrl.password);
-        }
-
         Logger.log(
-          `Using SOCKS proxy for [${key}]: ${redactProxyUrl(proxyUrl)}`,
+          `Using proxy for [${key}]: ${redactProxyUrl(proxyUrl)}`,
           "info",
         );
-
-        const { socket } = await SocksClient.createConnection({
-          proxy,
-          command: "connect",
-          destination: {
-            host: config.host,
-            port: config.port,
-          },
-        });
-
-        sshConfig.sock = socket;
+        sshConfig.sock = await this.createProxySocket(proxyUrl, config);
         Logger.log(
-          `SSH config object with SOCKS proxy: ${JSON.stringify(
+          `SSH config object with proxy: ${JSON.stringify(
             sshConfig,
             (field, value) => (field === "sock" ? "[Socket object]" : value),
           )}`,
@@ -878,7 +999,7 @@ export class SSHConnectionManager {
       } catch (error) {
         throw new ToolError(
           "SSH_CONNECTION_FAILED",
-          `Failed to create SOCKS proxy connection for [${key}]: ${
+          `Failed to create proxy connection for [${key}]: ${
             (error as Error).message
           }`,
           true,

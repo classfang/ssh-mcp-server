@@ -418,6 +418,13 @@ Host minimalhost
       assert.strictEqual(result.configs.default.socksProxy, 'socks://proxy:1080');
     });
 
+    it('应该正确解析通用代理', () => {
+      process.argv = ['node', 'test', '--host', '1.2.3.4', '--port', '22', '--username', 'user', '--password', 'pass', '--proxy', 'http://proxy:8080'];
+      const result = CommandLineParser.parseArgs();
+
+      assert.strictEqual(result.configs.default.proxy, 'http://proxy:8080');
+    });
+
     it('应该正确解析 allowed local paths', () => {
       process.argv = ['node', 'test', '--host', '1.2.3.4', '--port', '22', '--username', 'user', '--password', 'pass', '--allowed-local-paths', './tmp,~/.ssh'];
       const result = CommandLineParser.parseArgs();

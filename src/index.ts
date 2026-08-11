@@ -19,7 +19,8 @@ Options:
   -a, --agent <path>               SSH agent socket path or pageant on Windows
   -W, --whitelist <patterns>       Command whitelist regexes, comma-separated
   -B, --blacklist <patterns>       Command blacklist regexes, comma-separated
-  -s, --socksProxy <url>           SOCKS proxy URL
+  --proxy <url>                    Proxy URL (SOCKS5, HTTP, or HTTPS)
+  -s, --socksProxy <url>           Legacy SOCKS5 proxy URL
   --allowed-local-paths <paths>    Extra allowed local paths, comma-separated
   --allowed-remote-paths <paths>   Allowed remote POSIX absolute paths, comma-separated
   --transport-mode <mode>          SSH transport mode: exec or shell (default: exec)
