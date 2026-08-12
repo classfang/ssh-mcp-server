@@ -26,6 +26,7 @@ export interface SSHConfig {
   shellCommandTimeoutMs?: number; // Shell command timeout override, default: 30000ms
   connectionTimeoutMs?: number; // SSH connection and handshake timeout, default: 30000ms
   sftpTimeoutMs?: number; // SFTP open and transfer timeout, default: 300000ms
+  maxOutputBytes?: number; // Max captured bytes per command (stdout+stderr) before aborting, default: 10485760; set 0 to disable
   keepaliveIntervalMs?: number; // SSH keepalive interval, default: 10000ms
   keepaliveCountMax?: number; // Unanswered keepalive packets before disconnect, default: 3
   commandTemplate?: string; // Command template, use <quotedCommand> for shell arguments or <command> for raw insertion
