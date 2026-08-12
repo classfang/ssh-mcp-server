@@ -833,8 +833,14 @@ export class SSHConnectionManager {
     if (configured === undefined) {
       return DEFAULT_MAX_OUTPUT_BYTES;
     }
-    // Any non-positive value disables the cap.
-    return configured > 0 ? configured : 0;
+    if (!Number.isSafeInteger(configured) || configured < 0) {
+      throw new ToolError(
+        "COMMAND_VALIDATION_FAILED",
+        `maxOutputBytes must be a non-negative integer, got: ${String(configured)}`,
+        false,
+      );
+    }
+    return configured;
   }
 
   private async createSocksProxySocket(
@@ -1386,6 +1392,8 @@ export class SSHConnectionManager {
       commandToRun = applyCommandTemplate(config.commandTemplate, commandToRun);
     }
 
+    const maxOutputBytes = this.getMaxOutputBytes(config);
+
     return new Promise<string>((resolve, reject) => {
       let openTimeoutId: NodeJS.Timeout | undefined;
       let commandTimeoutId: NodeJS.Timeout | undefined;
@@ -1435,15 +1443,13 @@ export class SSHConnectionManager {
           let errorData = "";
           let exitCode: number | undefined;
           let exitSignal: string | undefined;
-          const maxOutputBytes = this.getMaxOutputBytes(config);
           let capturedBytes = 0;
-          let truncated = false;
 
           // Without a cap a single command (`cat` on a huge file, an unbounded
           // `journalctl`, ...) can buffer unbounded output in memory until the
           // command timeout fires. Stop capturing and close the channel instead.
           const appendChunk = (chunk: Buffer, isStderr: boolean) => {
-            if (truncated) {
+            if (settled) {
               return;
             }
 
@@ -1461,12 +1467,27 @@ export class SSHConnectionManager {
                 }
               }
               capturedBytes = maxOutputBytes;
-              truncated = true;
+              cleanup();
+              settled = true;
               try {
                 stream.close();
               } catch {
                 // Ignore close errors while aborting an oversized command.
               }
+              const stdout = data.trimEnd();
+              const stderr = errorData.trimEnd();
+              reject(
+                new ToolError(
+                  "OUTPUT_LIMIT_EXCEEDED",
+                  [
+                    this.formatCommandSuccess(stdout, stderr),
+                    `[truncated] Output exceeded maxOutputBytes=${maxOutputBytes}; the command was aborted.`,
+                  ]
+                    .filter(Boolean)
+                    .join("\n"),
+                  false,
+                ),
+              );
               return;
             }
 
@@ -1506,20 +1527,6 @@ export class SSHConnectionManager {
 
             const stdout = data.trimEnd();
             const stderr = errorData.trimEnd();
-
-            // We closed the channel ourselves, so the resulting exit status is
-            // our own doing — report the truncation rather than a bogus failure.
-            if (truncated) {
-              resolve(
-                [
-                  this.formatCommandSuccess(stdout, stderr),
-                  `[truncated] Output exceeded maxOutputBytes=${maxOutputBytes}; the command was aborted.`,
-                ]
-                  .filter(Boolean)
-                  .join("\n"),
-              );
-              return;
-            }
 
             const hasNonZeroExitCode =
               exitCode !== undefined && exitCode !== 0;

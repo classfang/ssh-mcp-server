@@ -65,6 +65,22 @@ export class CommandLineParser {
     return parsed;
   }
 
+  private static parseMaxOutputBytes(value: unknown): number | undefined {
+    if (value === undefined || value === null || value === "") {
+      return undefined;
+    }
+
+    const parsed = typeof value === "number" ? value : Number(String(value));
+
+    if (!Number.isSafeInteger(parsed) || parsed < 0) {
+      throw new Error(
+        `maxOutputBytes must be a non-negative integer, got: ${String(value)}`,
+      );
+    }
+
+    return parsed;
+  }
+
   /**
    * Parse command line arguments
    */
@@ -344,6 +360,7 @@ export class CommandLineParser {
         "connectionTimeoutMs",
       ),
       sftpTimeoutMs: this.parseTimeout(config.sftpTimeoutMs, "sftpTimeoutMs"),
+      maxOutputBytes: this.parseMaxOutputBytes(config.maxOutputBytes),
       keepaliveIntervalMs: this.parseTimeout(
         config.keepaliveIntervalMs,
         "keepaliveIntervalMs",

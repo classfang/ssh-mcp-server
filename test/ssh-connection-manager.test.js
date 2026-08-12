@@ -1279,10 +1279,18 @@ describe('SSH Connection Manager', () => {
         }),
       });
 
-      const result = await manager.executeCommand('cmd', undefined, 'exec');
-      assert.strictEqual(
-        result,
-        'abcdefgh\n[truncated] Output exceeded maxOutputBytes=8; the command was aborted.',
+      await assert.rejects(
+        () => manager.executeCommand('cmd', undefined, 'exec'),
+        (error) => {
+          assert.ok(error instanceof ToolError);
+          assert.strictEqual(error.code, 'OUTPUT_LIMIT_EXCEEDED');
+          assert.strictEqual(error.retriable, false);
+          assert.strictEqual(
+            error.message,
+            'abcdefgh\n[truncated] Output exceeded maxOutputBytes=8; the command was aborted.',
+          );
+          return true;
+        },
       );
       assert.strictEqual(closeCalls, 1);
     });

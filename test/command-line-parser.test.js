@@ -131,6 +131,59 @@ Host testhost
       }
     });
 
+    it('应该保留并校验 JSON 配置中的 maxOutputBytes', () => {
+      const outputLimitConfigPath = path.join(__dirname, 'fixtures', 'output-limit-config.json');
+      fs.writeFileSync(outputLimitConfigPath, JSON.stringify({
+        limited: {
+          host: '192.168.1.100',
+          port: 22,
+          username: 'limited-user',
+          password: 'limited-pass',
+          maxOutputBytes: 2048
+        },
+        unlimited: {
+          host: '192.168.1.101',
+          port: 22,
+          username: 'unlimited-user',
+          password: 'unlimited-pass',
+          maxOutputBytes: 0
+        }
+      }));
+
+      try {
+        process.argv = ['node', 'test', '--config-file', outputLimitConfigPath];
+        const result = CommandLineParser.parseArgs();
+
+        assert.strictEqual(result.configs.limited.maxOutputBytes, 2048);
+        assert.strictEqual(result.configs.unlimited.maxOutputBytes, 0);
+      } finally {
+        fs.unlinkSync(outputLimitConfigPath);
+      }
+    });
+
+    it('无效的 maxOutputBytes 应抛出错误', () => {
+      const invalidConfigPath = path.join(__dirname, 'fixtures', 'invalid-output-limit-config.json');
+      fs.writeFileSync(invalidConfigPath, JSON.stringify({
+        invalid: {
+          host: '192.168.1.100',
+          port: 22,
+          username: 'invalid-user',
+          password: 'invalid-pass',
+          maxOutputBytes: -1
+        }
+      }));
+
+      try {
+        process.argv = ['node', 'test', '--config-file', invalidConfigPath];
+        assert.throws(
+          () => CommandLineParser.parseArgs(),
+          /maxOutputBytes must be a non-negative integer/,
+        );
+      } finally {
+        fs.unlinkSync(invalidConfigPath);
+      }
+    });
+
     it('配置文件不存在时应抛出错误', () => {
       process.argv = ['node', 'test', '--config-file', '/nonexistent/config.json'];
       assert.throws(() => {
@@ -148,7 +201,8 @@ Host testhost
         username: 'testuser',
         password: 'testpass',
         transportMode: 'shell',
-        shellReadyTimeoutMs: 15000
+        shellReadyTimeoutMs: 15000,
+        maxOutputBytes: 0
       });
 
       process.argv = ['node', 'test', '--ssh', sshJson];
@@ -158,6 +212,7 @@ Host testhost
       assert.strictEqual(result.configs.test.username, 'testuser');
       assert.strictEqual(result.configs.test.transportMode, 'shell');
       assert.strictEqual(result.configs.test.shellReadyTimeoutMs, 15000);
+      assert.strictEqual(result.configs.test.maxOutputBytes, 0);
     });
 
     it('应该正确解析旧格式的 --ssh 参数', () => {

@@ -384,7 +384,8 @@ JSON 配置文件中还可以通过 `shellCommandTimeoutMs` 覆盖 shell 模式�
     "port": 22,
     "username": "alice",
     "password": "{abc=P100s0}",
-    "socksProxy": "socks://127.0.0.1:10808"
+    "socksProxy": "socks://127.0.0.1:10808",
+    "maxOutputBytes": 10485760
   },
   {
     "name": "bastion",
@@ -428,7 +429,8 @@ JSON 配置文件中还可以通过 `shellCommandTimeoutMs` 覆盖 shell 模式�
     "port": 22,
     "username": "alice",
     "password": "{abc=P100s0}",
-    "socksProxy": "socks://127.0.0.1:10808"
+    "socksProxy": "socks://127.0.0.1:10808",
+    "maxOutputBytes": 10485760
   },
   "bastion": {
     "host": "9.9.9.9",
@@ -537,6 +539,16 @@ npx @fangjunjie/ssh-mcp-server \
 - 错误响应现在包含稳定的 `code`、`message`、`retriable` 字段，便于上层 Agent 处理
 
 这对于像 `ping`、`tail -f` 或其他可能阻塞执行的长时间运行进程特别有用。
+
+### 📦 命令输出限制
+
+`exec` 模式会限制单条命令捕获的 `stdout` 和 `stderr` 总量，避免大文件或无限输出耗尽 MCP server 内存：
+
+- 在 JSON 连接配置中使用 `maxOutputBytes` 设置上限，默认值为 `10485760`（10 MiB）
+- `maxOutputBytes` 必须是非负整数；设置为 `0` 可禁用限制，但不建议对不受信任的命令禁用
+- 输出超过限制时，远端命令会被中止，工具返回 `OUTPUT_LIMIT_EXCEEDED` 错误和已经捕获的截断输出，不会把中止的命令误报为成功
+- 当 `pty` 为 `false` 时，成功命令写入 `stderr` 的警告或进度信息会保留在 `[stderr]` 区段中
+- 该限制目前仅适用于 `exec` 模式；`shell` 模式不使用 `maxOutputBytes`
 
 ### 🗂️ 列出所有SSH服务器
 

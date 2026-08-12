@@ -379,7 +379,8 @@ Create a JSON configuration file (e.g., `ssh-config.json`):
     "port": 22,
     "username": "alice",
     "password": "{abc=P100s0}",
-    "socksProxy": "socks://127.0.0.1:10808"
+    "socksProxy": "socks://127.0.0.1:10808",
+    "maxOutputBytes": 10485760
   },
   {
     "name": "bastion",
@@ -422,7 +423,8 @@ Create a JSON configuration file (e.g., `ssh-config.json`):
     "port": 22,
     "username": "alice",
     "password": "{abc=P100s0}",
-    "socksProxy": "socks://127.0.0.1:10808"
+    "socksProxy": "socks://127.0.0.1:10808",
+    "maxOutputBytes": 10485760
   },
   "bastion": {
     "host": "9.9.9.9",
@@ -531,6 +533,16 @@ The `execute-command` tool supports timeout options to prevent commands from han
 - Error responses include stable `code`, `message`, and `retriable` fields for easier agent-side handling
 
 This is particularly useful for commands like `ping`, `tail -f`, or other long-running processes that might block execution.
+
+### 📦 Command Output Limit
+
+In `exec` mode, the combined captured `stdout` and `stderr` for each command is limited to protect the MCP server from large files or unbounded output:
+
+- Set `maxOutputBytes` in a JSON connection configuration; the default is `10485760` bytes (10 MiB)
+- `maxOutputBytes` must be a non-negative integer; `0` disables the limit, which is not recommended for untrusted commands
+- When output exceeds the limit, the remote command is aborted and the tool returns an `OUTPUT_LIMIT_EXCEEDED` error with the captured, truncated output instead of reporting success
+- With `pty: false`, warnings and progress written to `stderr` by successful commands are preserved in a `[stderr]` section
+- The limit currently applies only to `exec` mode; `shell` mode does not use `maxOutputBytes`
 
 ### 🗂️ List All SSH Servers
 
