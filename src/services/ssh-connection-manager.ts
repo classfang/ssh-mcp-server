@@ -44,6 +44,7 @@ const DEFAULT_CONNECTION_TIMEOUT_MS = 30000;
 const DEFAULT_KEEPALIVE_INTERVAL_MS = 10000;
 const DEFAULT_KEEPALIVE_COUNT_MAX = 3;
 const DEFAULT_SFTP_TIMEOUT_MS = 300000;
+const DEFAULT_MAX_OUTPUT_BYTES = 10 * 1024 * 1024;
 
 function applyCommandTemplate(template: string, command: string): string {
   const quotedCommand = shellQuote(command);
@@ -827,6 +828,15 @@ export class SSHConnectionManager {
     return config.sftpTimeoutMs || DEFAULT_SFTP_TIMEOUT_MS;
   }
 
+  private getMaxOutputBytes(config: SSHConfig): number {
+    const configured = config.maxOutputBytes;
+    if (configured === undefined) {
+      return DEFAULT_MAX_OUTPUT_BYTES;
+    }
+    // Any non-positive value disables the cap.
+    return configured > 0 ? configured : 0;
+  }
+
   private async createSocksProxySocket(
     proxyUrl: URL,
     config: SSHConfig,
@@ -1298,6 +1308,23 @@ export class SSHConnectionManager {
     return outputSections.join("\n");
   }
 
+  /**
+   * Format the output of a command that finished successfully.
+   *
+   * stderr is kept instead of being dropped: with `pty: false` a successful
+   * command's stderr is delivered on a separate channel, and discarding it
+   * silently loses warnings and progress output written there by tools such as
+   * git, docker and npm. With the default `pty: true` the remote end merges
+   * stderr into stdout, so `stderr` is empty here and the output is unchanged.
+   */
+  private formatCommandSuccess(stdout: string, stderr: string): string {
+    if (!stderr) {
+      return stdout;
+    }
+
+    return [stdout, `[stderr]\n${stderr}`].filter(Boolean).join("\n");
+  }
+
   private async runCommandInternal(
     cmdString: string,
     directory?: string,
@@ -1408,12 +1435,51 @@ export class SSHConnectionManager {
           let errorData = "";
           let exitCode: number | undefined;
           let exitSignal: string | undefined;
+          const maxOutputBytes = this.getMaxOutputBytes(config);
+          let capturedBytes = 0;
+          let truncated = false;
 
-          stream.on("data", (chunk: Buffer) => (data += chunk.toString()));
-          stream.stderr.on(
-            "data",
-            (chunk: Buffer) => (errorData += chunk.toString()),
-          );
+          // Without a cap a single command (`cat` on a huge file, an unbounded
+          // `journalctl`, ...) can buffer unbounded output in memory until the
+          // command timeout fires. Stop capturing and close the channel instead.
+          const appendChunk = (chunk: Buffer, isStderr: boolean) => {
+            if (truncated) {
+              return;
+            }
+
+            if (
+              maxOutputBytes > 0 &&
+              capturedBytes + chunk.length > maxOutputBytes
+            ) {
+              const remaining = maxOutputBytes - capturedBytes;
+              if (remaining > 0) {
+                const partial = chunk.subarray(0, remaining).toString();
+                if (isStderr) {
+                  errorData += partial;
+                } else {
+                  data += partial;
+                }
+              }
+              capturedBytes = maxOutputBytes;
+              truncated = true;
+              try {
+                stream.close();
+              } catch {
+                // Ignore close errors while aborting an oversized command.
+              }
+              return;
+            }
+
+            capturedBytes += chunk.length;
+            if (isStderr) {
+              errorData += chunk.toString();
+            } else {
+              data += chunk.toString();
+            }
+          };
+
+          stream.on("data", (chunk: Buffer) => appendChunk(chunk, false));
+          stream.stderr.on("data", (chunk: Buffer) => appendChunk(chunk, true));
 
           stream.on(
             "exit",
@@ -1440,6 +1506,21 @@ export class SSHConnectionManager {
 
             const stdout = data.trimEnd();
             const stderr = errorData.trimEnd();
+
+            // We closed the channel ourselves, so the resulting exit status is
+            // our own doing — report the truncation rather than a bogus failure.
+            if (truncated) {
+              resolve(
+                [
+                  this.formatCommandSuccess(stdout, stderr),
+                  `[truncated] Output exceeded maxOutputBytes=${maxOutputBytes}; the command was aborted.`,
+                ]
+                  .filter(Boolean)
+                  .join("\n"),
+              );
+              return;
+            }
+
             const hasNonZeroExitCode =
               exitCode !== undefined && exitCode !== 0;
             const hasExitSignal =
@@ -1466,7 +1547,7 @@ export class SSHConnectionManager {
               return;
             }
 
-            resolve(stdout);
+            resolve(this.formatCommandSuccess(stdout, stderr));
           });
 
           stream.on("error", (streamError: Error) => {

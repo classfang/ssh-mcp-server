@@ -1198,6 +1198,124 @@ describe('SSH Connection Manager', () => {
       assert.strictEqual(client.execCalls.length, 1);
     });
 
+    it('命令成功时保留 stderr 而不是丢弃', async () => {
+      const stream = new FakeExecStream();
+      const client = new FakeClient({
+        onConnect: () => setImmediate(() => client.emit('ready')),
+        onExec: ({ callback }) => {
+          callback(undefined, stream);
+          setImmediate(() => {
+            stream.emit('data', Buffer.from('out-line\n'));
+            stream.stderr.emit('data', Buffer.from('warn-line\n'));
+            stream.emit('exit', 0);
+            stream.emit('close', 0);
+          });
+        },
+      });
+
+      manager.createClient = () => client;
+      manager.scheduleStatusCollection = () => {};
+      manager.setConfig({
+        exec: createPasswordConfig({
+          name: 'exec',
+          transportMode: 'exec',
+          pty: false,
+        }),
+      });
+
+      const result = await manager.executeCommand('cmd', undefined, 'exec');
+      assert.strictEqual(result, 'out-line\n[stderr]\nwarn-line');
+    });
+
+    it('命令成功且无 stderr 时输出保持原样', async () => {
+      const stream = new FakeExecStream();
+      const client = new FakeClient({
+        onConnect: () => setImmediate(() => client.emit('ready')),
+        onExec: ({ callback }) => {
+          callback(undefined, stream);
+          setImmediate(() => {
+            stream.emit('data', Buffer.from('only-stdout\n'));
+            stream.emit('exit', 0);
+            stream.emit('close', 0);
+          });
+        },
+      });
+
+      manager.createClient = () => client;
+      manager.scheduleStatusCollection = () => {};
+      manager.setConfig({
+        exec: createPasswordConfig({ name: 'exec', transportMode: 'exec' }),
+      });
+
+      const result = await manager.executeCommand('cmd', undefined, 'exec');
+      assert.strictEqual(result, 'only-stdout');
+    });
+
+    it('输出超过 maxOutputBytes 时截断并中止命令', async () => {
+      const stream = new FakeExecStream();
+      let closeCalls = 0;
+      stream.close = function close() {
+        closeCalls += 1;
+        this.emit('close');
+      };
+
+      const client = new FakeClient({
+        onConnect: () => setImmediate(() => client.emit('ready')),
+        onExec: ({ callback }) => {
+          callback(undefined, stream);
+          setImmediate(() => {
+            stream.emit('data', Buffer.from('abcdefghij'));
+          });
+        },
+      });
+
+      manager.createClient = () => client;
+      manager.scheduleStatusCollection = () => {};
+      manager.setConfig({
+        exec: createPasswordConfig({
+          name: 'exec',
+          transportMode: 'exec',
+          maxOutputBytes: 8,
+        }),
+      });
+
+      const result = await manager.executeCommand('cmd', undefined, 'exec');
+      assert.strictEqual(
+        result,
+        'abcdefgh\n[truncated] Output exceeded maxOutputBytes=8; the command was aborted.',
+      );
+      assert.strictEqual(closeCalls, 1);
+    });
+
+    it('maxOutputBytes 为 0 时不限制输出', async () => {
+      const stream = new FakeExecStream();
+      const payload = 'x'.repeat(4096);
+      const client = new FakeClient({
+        onConnect: () => setImmediate(() => client.emit('ready')),
+        onExec: ({ callback }) => {
+          callback(undefined, stream);
+          setImmediate(() => {
+            stream.emit('data', Buffer.from(payload));
+            stream.emit('exit', 0);
+            stream.emit('close', 0);
+          });
+        },
+      });
+
+      manager.createClient = () => client;
+      manager.scheduleStatusCollection = () => {};
+      manager.setConfig({
+        exec: createPasswordConfig({
+          name: 'exec',
+          transportMode: 'exec',
+          maxOutputBytes: 0,
+        }),
+      });
+
+      const result = await manager.executeCommand('cmd', undefined, 'exec');
+      assert.strictEqual(result, payload);
+    });
+
     it('exec channel 打不开时会按命令超时失效连接', async () => {
       const client = new FakeClient({
         onConnect: () => setImmediate(() => client.emit('ready')),
