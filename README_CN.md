@@ -1,4 +1,16 @@
+<p align="center">
+  <img src="images/ssh-mcp-server-logo-v2.png" alt="ssh-mcp-server logo" width="220">
+</p>
+
 # 🔐 ssh-mcp-server
+
+![NPM Version](https://img.shields.io/npm/v/%40fangjunjie%2Fssh-mcp-server?label=%40fangjunjie%2Fssh-mcp-server)
+![GitHub forks](https://img.shields.io/github/forks/classfang/ssh-mcp-server)
+![GitHub Repo stars](https://img.shields.io/github/stars/classfang/ssh-mcp-server)
+![GitHub Issues or Pull Requests](https://img.shields.io/github/issues/classfang/ssh-mcp-server)
+![GitHub Issues or Pull Requests](https://img.shields.io/github/issues-closed/classfang/ssh-mcp-server)
+![GitHub Issues or Pull Requests](https://img.shields.io/github/issues-pr/classfang/ssh-mcp-server)
+![GitHub Issues or Pull Requests](https://img.shields.io/github/issues-pr-closed/classfang/ssh-mcp-server)
 
 基于 SSH 的 MCP (Model Context Protocol) 服务器，允许通过 MCP 协议远程执行 SSH 命令。
 
@@ -7,6 +19,10 @@
 ## 📝 项目介绍
 
 ssh-mcp-server 是一个桥接工具，可以让 AI 助手等支持 MCP 协议的应用通过标准化接口执行远程 SSH 命令。这使得 AI 助手能够安全地操作远程服务器，执行命令并获取结果，而无需直接暴露 SSH 凭据给 AI 模型。
+
+💬 欢迎加入微信交流群：
+
+<img src="images/wechat.jpg" alt="wechat" width="220">
 
 ## ✨ 功能亮点
 
