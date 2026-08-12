@@ -12,64 +12,64 @@
 ![GitHub Issues or Pull Requests](https://img.shields.io/github/issues-pr/classfang/ssh-mcp-server)
 ![GitHub Issues or Pull Requests](https://img.shields.io/github/issues-pr-closed/classfang/ssh-mcp-server)
 
-SSH-based MCP (Model Context Protocol) server that allows remote execution of SSH commands via the MCP protocol.
+基于 SSH 的 MCP (Model Context Protocol) 服务器，允许通过 MCP 协议远程执行 SSH 命令。
 
-English Document | [中文文档](README_CN.md)
+[English Document](README_EN.md) | 中文文档
 
-## 📝 Project Overview
+## 📝 项目介绍
 
-ssh-mcp-server is a bridging tool that enables AI assistants and other applications supporting the MCP protocol to execute remote SSH commands through a standardized interface. This allows AI assistants to safely operate remote servers, execute commands, and retrieve results without directly exposing SSH credentials to AI models.
+ssh-mcp-server 是一个桥接工具，可以让 AI 助手等支持 MCP 协议的应用通过标准化接口执行远程 SSH 命令。这使得 AI 助手能够安全地操作远程服务器，执行命令并获取结果，而无需直接暴露 SSH 凭据给 AI 模型。
 
-💬 Welcome to join the WeChat communication group:
+💬 欢迎加入微信交流群：
 
 <img src="images/wechat.jpg" alt="wechat" width="220">
 
-## ✨ Key Features
+## ✨ 功能亮点
 
-- **🔒 Secure Connections**: Supports multiple secure SSH connection methods, including password authentication and private key authentication (with passphrase support)
-- **🛡️ Command Security Control**: Precisely control the range of allowed commands through flexible blacklist and whitelist mechanisms to prevent dangerous operations
-- **🔄 Standardized Interface**: Complies with MCP protocol specifications for seamless integration with AI assistants supporting the protocol
-- **🚇 Dual Transport Modes**: Supports both `exec` and `shell` transport modes for direct SSH hosts and bastion or jump-host scenarios
-- **📂 File Transfer**: Supports bidirectional file transfers, uploading local files to servers or downloading files from servers
-- **🔑 Credential Isolation**: SSH credentials are managed entirely locally and never exposed to AI models, enhancing security
-- **🚀 Ready to Use**: Can be run directly using NPX without global installation, making it convenient and quick to deploy
+- **🔒 安全连接**：支持多种安全的 SSH 连接方式，包括密码认证和私钥认证（支持带密码的私钥）
+- **🛡️ 命令安全控制**：通过灵活的黑白名单机制，精确控制允许执行的命令范围，防止危险操作
+- **🔄 标准化接口**：符合 MCP 协议规范，与支持该协议的 AI 助手无缝集成
+- **🚇 双传输模式**：同时支持 `exec` 和 `shell` 两种 transport，兼容直连主机与堡垒机或跳板机场景
+- **📂 文件传输**：支持双向文件传输功能，可上传本地文件到服务器或从服务器下载文件
+- **🔑 凭据隔离**：SSH 凭据完全在本地管理，不会暴露给 AI 模型，增强安全性
+- **🚀 即用即走**：使用 NPX 可直接运行，无需全局安装，方便快捷
 
-## 📦 Open Source Repository
+## 📦 开源仓库
 
-GitHub: [https://github.com/classfang/ssh-mcp-server](https://github.com/classfang/ssh-mcp-server)
+GitHub：[https://github.com/classfang/ssh-mcp-server](https://github.com/classfang/ssh-mcp-server)
 
 NPM: [https://www.npmjs.com/package/@fangjunjie/ssh-mcp-server](https://www.npmjs.com/package/@fangjunjie/ssh-mcp-server)
 
-## 🛠️ Tools List
+## 🛠️ 工具列表
 
-| Tool | Name | Description |
+| 工具 | 名称 | 描述 |
 |---------|-----------|----------|
-| execute-command | Command Execution Tool | Execute SSH commands on remote servers and get results |
-| upload | File Upload Tool | Upload local files to specified locations on remote servers |
-| download | File Download Tool | Download files from remote servers to local specified locations |
-| list-servers | List Servers Tool | List all available SSH server configurations |
+| execute-command | 命令执行工具 | 在远程服务器上执行 SSH 命令并获取执行结果 |
+| upload | 文件上传工具 | 将本地文件上传到远程服务器指定位置 |
+| download | 文件下载工具 | 从远程服务器下载文件到本地指定位置 |
+| list-servers | 服务器列表工具 | 列出所有可用SSH服务器配置 |
 
-## 📚 Usage
+## 📚 使用方法
 
-### 0. 🤖 Quick Setup via AI Skill (Recommended)
+### 0. 🤖 通过 AI Skill 快速配置（推荐）
 
-If you are using an AI coding assistant that supports skills (such as Claude Code), you can use the built-in **ssh-mcp-helper** skill to complete the installation and configuration interactively — no need to manually edit JSON files.
+如果你使用支持 skill 的 AI 编程助手（如 Claude Code），可以直接使用内置的 **ssh-mcp-helper** skill 通过交互式问答完成安装和配置，无需手动编辑 JSON 文件。
 
-**How to use:**
+**使用方式：**
 
-1. Install the skill from this repository's `skills/` directory
-2. Tell your AI assistant: "Help me set up ssh-mcp-server" or "Configure SSH MCP for my remote server"
-3. The skill will guide you step by step: check Node.js environment → choose MCP client → select authentication method → collect connection parameters → generate and write configuration
+1. 从本仓库 `skills/` 目录安装该 skill
+2. 告诉你的 AI 助手："帮我配置 ssh-mcp-server" 或 "给 Cursor 加一个 SSH MCP 连接"
+3. skill 会逐步引导你：检查 Node.js 环境 → 选择 MCP 客户端 → 选择认证方式 → 收集连接参数 → 生成并写入配置
 
-The skill supports all scenarios covered below (password, private key, SSH config reuse, SOCKS proxy, bastion hosts, multi-connection, 2FA, command restrictions, etc.) and automatically produces correctly formatted configuration.
+该 skill 支持下文所有场景（账号密码、私钥、SSH config 复用、SOCKS 代理、堡垒机、多连接、2FA、命令限制等），并自动生成格式正确的配置。
 
 ---
 
-The sections below are arranged from the simplest entry point (username + password) to more advanced scenarios. Pick the case that matches yours and copy the `mcp.json` snippet directly into your MCP client configuration.
+下面的章节按从简单到复杂的顺序排列，最简单的入门方式就是用账号密码连接服务器。直接复制对应场景下的 `mcp.json` 配置到你的 MCP 客户端即可使用。
 
-> **⚠️ Important**: In MCP configuration files, each command line argument and its value must be separate elements in the `args` array. Do NOT combine them with spaces. For example, use `"--host", "192.168.1.1"` instead of `"--host 192.168.1.1"`.
+> **⚠️ 重要提示**：在 MCP 配置文件中，每个命令行参数和其值必须是 `args` 数组中的独立元素。不要用空格将它们连接在一起。例如，使用 `"--host", "192.168.1.1"` 而不是 `"--host 192.168.1.1"`。
 
-### 1. 🔑 Username + Password (simplest)
+### 1. 🔑 账号密码（最简单）
 
 ```json
 {
@@ -89,7 +89,7 @@ The sections below are arranged from the simplest entry point (username + passwo
 }
 ```
 
-### 2. 🔐 Username + Private Key
+### 2. 🔐 账号 + 私钥
 
 ```json
 {
@@ -109,7 +109,7 @@ The sections below are arranged from the simplest entry point (username + passwo
 }
 ```
 
-### 3. 🔏 Private Key with Passphrase
+### 3. 🔏 带密码的私钥
 
 ```json
 {
@@ -130,9 +130,9 @@ The sections below are arranged from the simplest entry point (username + passwo
 }
 ```
 
-### 4. 📋 Reuse `~/.ssh/config`
+### 4. 📋 复用 `~/.ssh/config`
 
-If you already have a host alias in `~/.ssh/config`, the server reads connection parameters directly from it — no need to repeat them in `mcp.json`.
+如果你已经在 `~/.ssh/config` 配置了主机别名，服务器会自动从中读取连接参数，`mcp.json` 里就不用再写一遍。
 
 ```json
 {
@@ -149,7 +149,7 @@ If you already have a host alias in `~/.ssh/config`, the server reads connection
 }
 ```
 
-Assuming your `~/.ssh/config` contains:
+假设你的 `~/.ssh/config` 包含：
 
 ```
 Host myserver
@@ -159,7 +159,7 @@ Host myserver
     IdentityFile ~/.ssh/id_rsa
 ```
 
-You can also specify a custom SSH config file path:
+你也可以指定自定义的 SSH 配置文件路径：
 
 ```json
 {
@@ -177,11 +177,11 @@ You can also specify a custom SSH config file path:
 }
 ```
 
-**Note**: Command-line parameters take precedence over SSH config values. For example, if you specify `--port 2222`, it will override the port from SSH config.
+**注意**：命令行参数优先级高于 SSH 配置值。例如，如果你指定了 `--port 2222`，它会覆盖 SSH 配置中的端口。
 
-### 5. 🌐 Connecting Through a Proxy
+### 5. 🌐 通过代理连接
 
-When the target host is only reachable through a proxy, use `--proxy` with a SOCKS5, HTTP, or HTTPS proxy.
+当目标主机只能通过代理访问时，可使用 `--proxy` 配置 SOCKS5、HTTP 或 HTTPS 代理。
 
 ```json
 {
@@ -202,7 +202,7 @@ When the target host is only reachable through a proxy, use `--proxy` with a SOC
 }
 ```
 
-Supported URL formats:
+支持的 URL 格式：
 
 ```text
 socks://username:password@proxy-host:1080
@@ -211,15 +211,15 @@ http://username:password@proxy-host:8080
 https://username:password@proxy-host:8443
 ```
 
-HTTP and HTTPS proxies use the `CONNECT` method to tunnel to the SSH server, with optional Basic proxy authentication. HTTP and HTTPS default to ports `80` and `443`; SOCKS5 requires an explicit port. HTTPS proxy certificates are verified using the default Node.js trust store.
+HTTP 和 HTTPS 代理通过 `CONNECT` 方法建立到 SSH 服务的隧道，用户名和密码使用 Basic 代理认证。HTTP、HTTPS 未填写端口时分别默认使用 `80`、`443`；SOCKS5 必须填写端口。HTTPS 代理证书使用 Node.js 默认信任链进行验证。
 
-The existing `socksProxy` configuration and `--socksProxy` option remain supported for backward compatibility, but only accept `socks://` and `socks5://`. Do not configure both `proxy` and `socksProxy`.
+原有 `socksProxy` 配置和 `--socksProxy` 参数继续兼容，但只接受 `socks://` 和 `socks5://`。不要同时配置 `proxy` 和 `socksProxy`。
 
-### 6. 📝 Restricting Commands With Whitelist / Blacklist
+### 6. 📝 使用命令白名单 / 黑名单
 
-Use `--whitelist` and `--blacklist` to limit which commands the server is allowed to run. Patterns are comma-separated regular expressions. **Strongly recommended** for any production use.
+通过 `--whitelist` 和 `--blacklist` 限制服务器允许执行的命令范围。多个模式之间用逗号分隔，每个模式都是一个正则表达式。**生产环境强烈建议配置**。
 
-Whitelist example (only allow read-only inspection commands):
+白名单示例（仅允许只读型查看命令）：
 
 ```json
 {
@@ -240,7 +240,7 @@ Whitelist example (only allow read-only inspection commands):
 }
 ```
 
-Blacklist example (block destructive commands):
+黑名单示例（屏蔽危险命令）：
 
 ```json
 {
@@ -261,11 +261,11 @@ Blacklist example (block destructive commands):
 }
 ```
 
-> Note: If both whitelist and blacklist are specified, the command must pass both checks (whitelist first, then blacklist) to be executed.
+> 注意：如果同时指定了白名单和黑名单，系统会先检查命令是否在白名单中，再检查是否在黑名单中，命令必须同时通过两项检查才能被执行。
 
-### 7. 🧩 Wrapping Commands With a Template
+### 7. 🧩 使用命令模板包裹命令
 
-`commandTemplate` wraps every executed command in a template — useful for switching user via `su`, running inside a container, or jumping through another host. Use `<quotedCommand>` when the command is passed as a shell argument, or `<command>` for raw insertion. The template is applied **after** the working-directory `cd` is prepended, so the entire `cd ... && <actual command>` chain gets wrapped.
+`commandTemplate` 会把每条执行的命令套进一个模板里，适合切换用户（`su`）、放进容器、或经过跳板机的场景。当命令会作为 shell 参数传入时使用 `<quotedCommand>`，需要原样插入时使用 `<command>`；模板会**在目录 `cd` 拼接之后**应用，因此整个 `cd ... && <实际命令>` 都会被包裹起来。
 
 ```json
 {
@@ -286,13 +286,13 @@ Blacklist example (block destructive commands):
 }
 ```
 
-Executing `ls /app` with directory `/data` actually sends:
+当指定目录为 `/data` 执行 `ls /app` 时，实际发送的命令是：
 
 ```
 su root -c 'cd -- '\''/data'\'' && ls /app'
 ```
 
-Other useful templates:
+其他常见模板：
 
 ```text
 sudo bash -c <quotedCommand>
@@ -300,18 +300,18 @@ docker exec -i mycontainer sh -c <quotedCommand>
 ssh jumphost <quotedCommand>
 ```
 
-### 8. 🚇 Bastion / Jump Host (`transportMode: shell`)
+### 8. 🚇 堡垒机 / 跳板机（`transportMode: shell`）
 
-`transportMode` defaults to `exec`. Switch to `shell` when:
+`transportMode` 默认是 `exec`。出现下面这些情况时，应该切换到 `shell`：
 
-- SSH login succeeds but `exec` command execution fails
-- The remote side requires shell startup scripts, banners, or environment initialization first
-- The target effectively exposes only an interactive shell (bastion hosts, jump hosts, network devices)
+- SSH 登录成功，但 `exec` 执行命令失败
+- 远端必须等登录 banner、profile、环境初始化完成后才能正常执行命令
+- 连接目标本质上是堡垒机或只暴露交互式 shell 的设备
 
-Behavior differences:
+两者差异：
 
-- `exec`: supports `execute-command`, `upload`, and `download`
-- `shell`: runs commands through a persistent shell session with an internal command queue, but does **not** support `upload` / `download` because SFTP is unavailable in this mode
+- `exec`：支持 `execute-command`、`upload`、`download`
+- `shell`：命令通过持久 shell 会话串行执行，内部带命令队列；但**不支持** `upload` / `download`，因为该模式下禁用了 SFTP
 
 ```json
 {
@@ -333,11 +333,11 @@ Behavior differences:
 }
 ```
 
-In JSON config files you can also set `shellCommandTimeoutMs` to override the default per-command timeout for shell-backed connections.
+JSON 配置文件中还可以通过 `shellCommandTimeoutMs` 覆盖 shell 模式下单条命令的默认超时。
 
-### 9. 🔐 Multi-Factor Authentication (2FA / MFA)
+### 9. 🔐 多因素认证（2FA / MFA）
 
-When the SSH server requires multi-factor authentication (password + private key + 2FA verification code), enable `tryKeyboard`. The password and private key are auto-supplied. For non-password prompts, set `SSH_MCP_2FA_CODE` in the server environment before connecting.
+当 SSH 服务器要求多因素认证（密码 + 私钥 + 2FA 验证码）时启用 `tryKeyboard`。密码和私钥会自动提供；对于非密码提示，请在连接前通过服务端环境变量 `SSH_MCP_2FA_CODE` 提供验证码。
 
 ```json
 {
@@ -359,20 +359,21 @@ When the SSH server requires multi-factor authentication (password + private key
 }
 ```
 
-**Authentication flow:**
-1. Private key authentication (if provided)
-2. Password authentication (if provided)
-3. Keyboard-interactive for 2FA code via `SSH_MCP_2FA_CODE`
+**认证流程：**
+1. 私钥认证（如果提供）
+2. 密码认证（如果提供）
+3. 键盘交互式认证通过 `SSH_MCP_2FA_CODE` 提供 2FA 验证码
 
-### 10. 🧩 Managing Multiple SSH Connections
+### 10. 🧩 多 SSH 连接配置
 
-When you need to expose more than one SSH target through the same MCP server, register them under unique connection names and select the target at call time via `connectionName`. There are three ways to configure them:
+需要在同一个 MCP server 里同时管理多个 SSH 目标时，给每个连接命名，调用时通过 `connectionName` 选择。共有三种配置方式：
 
-#### 📄 Method 1: Using Config File (Recommended)
+#### 📄 方式一：使用配置文件（推荐）
 
-Create a JSON configuration file (e.g., `ssh-config.json`):
+创建 JSON 配置文件（例如 `ssh-config.json`）：
 
-**Array Format:**
+**数组格式：**
+
 ```json
 [
   {
@@ -416,7 +417,8 @@ Create a JSON configuration file (e.g., `ssh-config.json`):
 ]
 ```
 
-**Object Format:**
+**对象格式：**
+
 ```json
 {
   "dev": {
@@ -445,7 +447,7 @@ Create a JSON configuration file (e.g., `ssh-config.json`):
 }
 ```
 
-Then use the `--config-file` parameter:
+然后使用 `--config-file` 参数：
 
 ```json
 {
@@ -462,9 +464,9 @@ Then use the `--config-file` parameter:
 }
 ```
 
-#### 🔧 Method 2: Using JSON Format with --ssh Parameter
+#### 🔧 方式二：使用 JSON 格式的 --ssh 参数
 
-You can pass JSON-formatted configuration strings directly:
+可以直接传递 JSON 格式的配置字符串：
 
 ```json
 {
@@ -483,9 +485,9 @@ You can pass JSON-formatted configuration strings directly:
 }
 ```
 
-#### 📝 Method 3: Legacy Comma-Separated Format (Backward Compatible)
+#### 📝 方式三：旧格式逗号分隔（向后兼容）
 
-For simple cases without special characters in passwords, you can still use the legacy format:
+对于密码中不包含特殊字符的简单情况，仍可使用旧格式：
 
 ```bash
 npx @fangjunjie/ssh-mcp-server \
@@ -493,11 +495,11 @@ npx @fangjunjie/ssh-mcp-server \
   --ssh "name=prod,host=5.6.7.8,port=22,user=bob,password=yyy"
 ```
 
-> **⚠️ Note**: The legacy format may have issues with passwords containing special characters like `=`, `,`, `{`, `}`. Use Method 1 or Method 2 for passwords with special characters.
+> **⚠️ 注意**：旧格式在处理包含特殊字符（如 `=`、`,`、`{`、`}`）的密码时可能会有问题。如果密码包含特殊字符，请使用方式一或方式二。
 
-In MCP tool calls, specify the connection name via the `connectionName` parameter. If omitted, the default connection is used.
+在MCP工具调用时，通过 `connectionName` 参数指定目标连接名称，未指定时使用默认连接。
 
-Example (execute command on 'prod' connection):
+示例（在prod连接上执行命令）：
 
 ```json
 {
@@ -509,7 +511,7 @@ Example (execute command on 'prod' connection):
 }
 ```
 
-Example (execute command with timeout options):
+示例（带超时选项的命令执行）：
 
 ```json
 {
@@ -522,23 +524,23 @@ Example (execute command with timeout options):
 }
 ```
 
-### ⏱️ Command Execution Timeout
+### ⏱️ 命令执行超时
 
-The `execute-command` tool supports timeout options to prevent commands from hanging indefinitely:
+`execute-command` 工具支持超时选项，防止命令无限期挂起：
 
-- **timeout**: Command execution timeout in milliseconds (optional, default is 30000ms)
-- In `shell` mode, you can also set `shellCommandTimeoutMs` per connection in the JSON config file
-- Connections use SSH keepalives by default (`keepaliveIntervalMs`: 10000, `keepaliveCountMax`: 3) and respect `connectionTimeoutMs` for connection setup
-- SFTP open and transfer operations respect `sftpTimeoutMs` (default 300000ms)
-- Error responses include stable `code`, `message`, and `retriable` fields for easier agent-side handling
+- **timeout**: 命令执行超时时间（毫秒，可选，默认为30000ms）
+- 在 `shell` 模式下，还可以在 JSON 配置文件里为单个连接设置 `shellCommandTimeoutMs`
+- 连接默认启用 SSH keepalive（`keepaliveIntervalMs`: 10000，`keepaliveCountMax`: 3），并使用 `connectionTimeoutMs` 限制连接建立时间
+- SFTP 打开和传输操作使用 `sftpTimeoutMs` 控制超时（默认 300000ms）
+- 错误响应现在包含稳定的 `code`、`message`、`retriable` 字段，便于上层 Agent 处理
 
-This is particularly useful for commands like `ping`, `tail -f`, or other long-running processes that might block execution.
+这对于像 `ping`、`tail -f` 或其他可能阻塞执行的长时间运行进程特别有用。
 
-### 🗂️ List All SSH Servers
+### 🗂️ 列出所有SSH服务器
 
-You can use the MCP tool `list-servers` to get all available SSH server configurations:
+可以通过MCP工具 `list-servers` 获取所有可用的SSH服务器配置：
 
-Example call:
+调用示例：
 
 ```json
 {
@@ -547,7 +549,7 @@ Example call:
 }
 ```
 
-Example response:
+返回示例：
 
 ```json
 [
@@ -556,48 +558,48 @@ Example response:
 ]
 ```
 
-### ⚙️ Command Line Options Reference
+### ⚙️ 命令行选项参考
 
 ```text
-Options:
-  --config-file       JSON configuration file path (recommended for multiple servers)
-  --ssh-config-file   SSH config file path (default: ~/.ssh/config)
-  --ssh               SSH connection configuration (can be JSON string or legacy format)
-  -h, --host          SSH server host address or alias from SSH config
-  -p, --port          SSH server port
-  -u, --username      SSH username
-  -w, --password      SSH password
-  -k, --privateKey    SSH private key file path
-  -P, --passphrase    Private key passphrase (if any)
-  -a, --agent         SSH agent socket path
-  --try-keyboard      Enable keyboard-interactive authentication for 2FA/MFA (default: false)
-  -W, --whitelist     Command whitelist, comma-separated regular expressions
-  -B, --blacklist     Command blacklist, comma-separated regular expressions
-  --proxy             Proxy URL supporting SOCKS5, HTTP, and HTTPS
-  -s, --socksProxy    Legacy SOCKS5 proxy URL
-  --allowed-local-paths   Additional allowed local paths for upload/download, comma-separated
-  --allowed-remote-paths  Allowed remote (POSIX, absolute) paths for SFTP upload/download, comma-separated
-  --transport-mode    SSH transport mode: exec or shell (default: exec)
-  --shell-ready-timeout   Shell readiness probe timeout in milliseconds (default: 10000)
-  --command-template  Command template, use <quotedCommand> for shell arguments or <command> for raw insertion
-  --pty               Allocate pseudo-tty for command execution (default: true)
-  --pre-connect       Pre-connect to all configured SSH servers on startup
-  --version, -v       Print package version
-  --help              Print this help message
+选项:
+  --config-file       JSON 配置文件路径（推荐用于多服务器配置）
+  --ssh-config-file   SSH 配置文件路径（默认: ~/.ssh/config）
+  --ssh               SSH 连接配置（可以是 JSON 字符串或旧格式）
+  -h, --host          SSH 服务器主机地址或 SSH 配置中的别名
+  -p, --port          SSH 服务器端口
+  -u, --username      SSH 用户名
+  -w, --password      SSH 密码
+  -k, --privateKey    SSH 私钥文件路径
+  -P, --passphrase    私钥密码（如果有的话）
+  -a, --agent         SSH agent socket 路径
+  --try-keyboard      启用键盘交互式认证以支持 2FA/MFA（默认: false）
+  -W, --whitelist     命令白名单，以逗号分隔的正则表达式
+  -B, --blacklist     命令黑名单，以逗号分隔的正则表达式
+  --proxy             代理地址，支持 SOCKS5、HTTP 和 HTTPS
+  -s, --socksProxy    旧版 SOCKS5 代理地址（兼容参数）
+  --allowed-local-paths   upload/download 允许访问的额外本地路径，逗号分隔
+  --allowed-remote-paths  SFTP upload/download 允许访问的远端路径（POSIX 绝对路径），逗号分隔
+  --transport-mode    SSH transport 模式: exec 或 shell（默认: exec）
+  --shell-ready-timeout   shell 就绪探测超时，单位毫秒（默认: 10000）
+  --command-template  命令模板；shell 参数用 <quotedCommand>，原样插入用 <command>
+  --pty               为命令执行分配伪终端（默认: true）
+  --pre-connect       启动时预连接所有配置的 SSH 服务器
+  --version, -v       打印包版本
+  --help              打印帮助信息
 ```
 
-## 🛡️ Security Considerations
+## 🛡️ 安全注意事项
 
-This server provides powerful capabilities to execute commands and transfer files on remote servers. To ensure it is used securely, please consider the following:
+该服务器提供了在远程服务器上执行命令和传输文件的强大功能。为确保安全使用，请注意以下几点：
 
-- **Command Whitelisting**: It is *strongly recommended* to use the `--whitelist` option to restrict the set of commands that can be executed. Without a whitelist, any command can be executed on the remote server, which can be a significant security risk.
-- **Private Key Security**: The server reads the SSH private key into memory. Ensure that the machine running the `ssh-mcp-server` is secure. Do not expose the server to untrusted networks.
-- **Denial of Service (DoS)**: The server does not have built-in rate limiting. An attacker could potentially launch a DoS attack by flooding the server with connection requests or large file transfers. It is recommended to run the server behind a firewall or reverse proxy with rate-limiting capabilities.
-- **Path Traversal**: The server has built-in protection against path traversal attacks on the local filesystem. However, it is still important to be mindful of the paths used in `upload` and `download` commands.
-- **Local Transfer Scope**: By default, local file transfers are restricted to the current working directory. Use `--allowed-local-paths` or `allowedLocalPaths` in config only for explicitly trusted directories.
-- **Remote Transfer Scope**: SFTP upload/download accepts only absolute POSIX paths. If `allowedRemotePaths` (or `--allowed-remote-paths`) is not configured, any remote path is accepted and the server prints a startup warning. Configure `allowedRemotePaths` to whitelist a small set of remote directories; this is strongly recommended to prevent prompt-injection-driven reads or writes of files like `~/.ssh/authorized_keys` or `/etc/sshd_config`.
+- **命令白名单**：*强烈建议* 使用 `--whitelist` 选项来限制可执行的命令集合。如果没有白名单，任何命令都可以在远程服务器上执行，这可能带来重大的安全风险。
+- **私钥安全**：服务器会将 SSH 私钥读入内存。请确保运行 `ssh-mcp-server` 的机器是安全的。不要将服务器暴露给不受信任的网络。
+- **拒绝服务攻击 (DoS)**：服务器没有内置的速率限制。攻击者可能通过向服务器发送大量连接请求或大文件传输来发起 DoS 攻击。建议在具有速率限制功能的防火墙或反向代理后面运行服务器。
+- **路径遍历**：服务器内置了对本地文件系统路径遍历攻击的保护。但是，仍然需要注意在 `upload` 和 `download` 命令中使用的路径。
+- **本地传输范围**：默认仅允许访问当前工作目录。只有在明确可信时，才建议通过 `--allowed-local-paths` 或配置文件中的 `allowedLocalPaths` 放宽范围。
+- **远端传输范围**：SFTP upload/download 仅接受绝对 POSIX 路径。未配置 `allowedRemotePaths`（或 `--allowed-remote-paths`）时，任意远端路径都允许，但启动时会打印警告。强烈建议显式配置 `allowedRemotePaths` 白名单，避免模型被 prompt 注入后读写 `~/.ssh/authorized_keys`、`/etc/sshd_config` 之类敏感文件。
 
-## 🌟 Star History
+## 🌟 Star 历史
 
 ## Star History
 
