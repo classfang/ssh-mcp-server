@@ -34,7 +34,9 @@ export function formatServerList(servers: ServerInfo[]): string {
     ...summary,
     "",
     "Raw JSON:",
-    JSON.stringify(servers, null, 2),
+    // Not indented: the pretty printed form is roughly 40% larger for the same
+    // data, and this output is fed to a model rather than read as a document.
+    JSON.stringify(servers),
   ].join("\n");
 }
 
