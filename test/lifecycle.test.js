@@ -108,7 +108,11 @@ function spawnServer(configPath) {
 }
 
 describe('MCP server lifecycle', () => {
-  it('exits after SIGTERM even when stdin remains open', async () => {
+  // Windows has no POSIX signals: child.kill('SIGTERM') maps to
+  // TerminateProcess, so the handler under test never runs and the exit is
+  // always reported as signalled. The stdin path below covers shutdown there,
+  // and is what MCP clients actually use.
+  it('exits after SIGTERM even when stdin remains open', { skip: process.platform === 'win32' && 'no POSIX signals on Windows' }, async () => {
     const { tmpDir, configPath } = createTempConfig();
     const { child, closeInput } = spawnServer(configPath);
 
@@ -155,6 +159,9 @@ describe('MCP server lifecycle', () => {
     const sockets = new Set();
     handshakeServer.on('connection', (socket) => {
       sockets.add(socket);
+      // Killing the child resets this connection instead of closing it
+      // cleanly on some platforms; an unhandled 'error' would fail the test.
+      socket.on('error', () => {});
       socket.on('close', () => sockets.delete(socket));
     });
 

@@ -369,7 +369,9 @@ Host minimalhost
       assert.strictEqual(result.configs.default.host, '172.16.0.1');
       assert.strictEqual(result.configs.default.port, 2222);
       assert.strictEqual(result.configs.default.username, 'testuser');
-      assert.ok(result.configs.default.privateKey.includes('.ssh/test_key'));
+      assert.ok(
+        result.configs.default.privateKey.endsWith(path.join('.ssh', 'test_key')),
+      );
     });
 
     it('命令行参数应覆盖 SSH config 值', () => {
@@ -486,7 +488,7 @@ Host minimalhost
 
       assert.ok(Array.isArray(result.configs.default.allowedLocalPaths));
       assert.strictEqual(result.configs.default.allowedLocalPaths.length, 2);
-      assert.ok(result.configs.default.allowedLocalPaths.every((entry) => entry.startsWith('/')));
+      assert.ok(result.configs.default.allowedLocalPaths.every((entry) => path.isAbsolute(entry)));
       assert.strictEqual(result.configs.default.allowedLocalPaths[1], path.join(os.homedir(), '.ssh'));
     });
 
