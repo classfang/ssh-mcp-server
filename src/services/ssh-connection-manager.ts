@@ -12,6 +12,7 @@ import fs from "fs";
 import path from "path";
 import type { Duplex } from "node:stream";
 import { pipeline } from "node:stream/promises";
+import { StringDecoder } from "node:string_decoder";
 
 const require = createRequire(import.meta.url);
 
@@ -27,6 +28,26 @@ type ShellCommandMatch = {
   remainder: string;
 };
 
+/**
+ * Incremental marker scanner state.
+ *
+ * Scanning the accumulated buffer on every chunk is quadratic, and not only
+ * because of the repeated comparisons: `indexOf` needs a flat string, so each
+ * call re-flattens the rope built by the appends and copies the whole buffer
+ * again. `tail` therefore holds just the text that could still start a marker —
+ * the previous scan already ruled out everything before it — so each chunk is
+ * examined once against a short string, and the accumulated buffer is only
+ * touched when a complete marker has been located.
+ *
+ * `tailStart` is the absolute index of `tail[0]` within that buffer, which is
+ * what turns a tail-relative hit back into an absolute position.
+ */
+type ShellScanState = {
+  outputStartIndex: number;
+  tail: string;
+  tailStart: number;
+};
+
 type SshAuthMethod =
   | "none"
   | "password"
@@ -37,6 +58,11 @@ type SshAuthMethod =
 
 const ANSI_OSC_PATTERN = /\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)/g;
 const ANSI_CSI_PATTERN = /\u001b\[[0-?]*[ -/]*[@-~]/g;
+
+// Matches the exit code that `buildShellCommandScript` prints right after the
+// end marker prefix, anchored so it can only be read at the expected offset.
+const SHELL_EXIT_CODE_PATTERN = /^(-?\d+)__(?:\r)?\n/;
+const SHELL_EXIT_CODE_MAX_LENGTH = 32;
 
 const COMMAND_TEMPLATE_PLACEHOLDER = "<command>";
 const QUOTED_COMMAND_TEMPLATE_PLACEHOLDER = "<quotedCommand>";
@@ -146,6 +172,9 @@ export class SSHConnectionManager {
   private shellReady: Map<string, boolean> = new Map();
   private shellQueues: Map<string, Promise<unknown>> = new Map();
   private shellBuffers: Map<string, string> = new Map();
+  // A multi-byte character can be split across two TCP chunks, so the channel
+  // needs one decoder for its whole lifetime rather than a decode per chunk.
+  private shellDecoders: Map<string, StringDecoder> = new Map();
   private defaultName: string = "default";
 
   private constructor() {}
@@ -747,6 +776,7 @@ export class SSHConnectionManager {
     this.shellReady.clear();
     this.shellQueues.clear();
     this.shellBuffers.clear();
+    this.shellDecoders.clear();
   }
 
   /**
@@ -1444,6 +1474,10 @@ export class SSHConnectionManager {
           let exitCode: number | undefined;
           let exitSignal: string | undefined;
           let capturedBytes = 0;
+          // Decoding each chunk on its own corrupts any multi-byte character
+          // that happens to be split across a chunk boundary.
+          const stdoutDecoder = new StringDecoder("utf8");
+          const stderrDecoder = new StringDecoder("utf8");
 
           // Without a cap a single command (`cat` on a huge file, an unbounded
           // `journalctl`, ...) can buffer unbounded output in memory until the
@@ -1459,11 +1493,11 @@ export class SSHConnectionManager {
             ) {
               const remaining = maxOutputBytes - capturedBytes;
               if (remaining > 0) {
-                const partial = chunk.subarray(0, remaining).toString();
+                const partial = chunk.subarray(0, remaining);
                 if (isStderr) {
-                  errorData += partial;
+                  errorData += stderrDecoder.write(partial);
                 } else {
-                  data += partial;
+                  data += stdoutDecoder.write(partial);
                 }
               }
               capturedBytes = maxOutputBytes;
@@ -1493,9 +1527,9 @@ export class SSHConnectionManager {
 
             capturedBytes += chunk.length;
             if (isStderr) {
-              errorData += chunk.toString();
+              errorData += stderrDecoder.write(chunk);
             } else {
-              data += chunk.toString();
+              data += stdoutDecoder.write(chunk);
             }
           };
 
@@ -1525,8 +1559,9 @@ export class SSHConnectionManager {
               exitSignal = signal;
             }
 
-            const stdout = data.trimEnd();
-            const stderr = errorData.trimEnd();
+            // Flush any trailing incomplete multi-byte sequence.
+            const stdout = (data + stdoutDecoder.end()).trimEnd();
+            const stderr = (errorData + stderrDecoder.end()).trimEnd();
 
             const hasNonZeroExitCode =
               exitCode !== undefined && exitCode !== 0;
@@ -1641,6 +1676,7 @@ export class SSHConnectionManager {
     this.shellReady.set(key, false);
     this.shellQueues.set(key, Promise.resolve());
     this.shellBuffers.set(key, "");
+    this.shellDecoders.set(key, new StringDecoder("utf8"));
 
     const readyId = this.generateMarkerId("ready");
     const readyMarker = `__MCP_READY__${readyId}__`;
@@ -1712,7 +1748,7 @@ export class SSHConnectionManager {
       };
 
       const onData = (chunk: Buffer) => {
-        this.appendShellBuffer(key, chunk.toString());
+        this.appendShellBuffer(key, chunk);
         resolveIfReady();
       };
 
@@ -1830,9 +1866,19 @@ export class SSHConnectionManager {
     const config = this.getConfig(key);
     const script = this.buildShellCommandScript(commandId, cmdString, directory, config.commandTemplate);
 
+    const maxOutputBytes = this.getMaxOutputBytes(config);
+
     return new Promise<string>((resolve, reject) => {
       let settled = false;
       let timeoutId: NodeJS.Timeout;
+      let capturedBytes = 0;
+      const scanState: ShellScanState = {
+        outputStartIndex: -1,
+        tail: "",
+        // Whatever the previous command left behind cannot hold this command's
+        // markers, so the scan starts past it.
+        tailStart: (this.shellBuffers.get(key) || "").length,
+      };
 
       const cleanup = () => {
         if (timeoutId) {
@@ -1859,8 +1905,11 @@ export class SSHConnectionManager {
       };
 
       const resolveIfComplete = () => {
-        const buffer = this.shellBuffers.get(key) || "";
-        const matched = this.extractShellCommandResult(buffer, commandId);
+        const matched = this.extractShellCommandResult(
+          key,
+          commandId,
+          scanState,
+        );
         if (!matched) {
           return;
         }
@@ -1887,7 +1936,25 @@ export class SSHConnectionManager {
       };
 
       const onData = (chunk: Buffer) => {
-        this.appendShellBuffer(key, chunk.toString());
+        scanState.tail += this.appendShellBuffer(key, chunk);
+        capturedBytes += chunk.length;
+
+        // The shell channel is shared by every command on this connection, so
+        // it cannot simply be closed like an exec channel: the command would
+        // keep writing into the buffer. Drop the connection instead, the same
+        // way the command timeout does.
+        if (maxOutputBytes > 0 && capturedBytes > maxOutputBytes) {
+          this.invalidateConnection(key);
+          finish(
+            new ToolError(
+              "OUTPUT_LIMIT_EXCEEDED",
+              `[truncated] Output exceeded maxOutputBytes=${maxOutputBytes}; the command was aborted.`,
+              false,
+            ),
+          );
+          return;
+        }
+
         resolveIfComplete();
       };
 
@@ -1956,44 +2023,108 @@ export class SSHConnectionManager {
     ].join("\n");
   }
 
-  private extractShellCommandResult(
-    buffer: string,
-    commandId: string,
-  ): ShellCommandMatch | null {
-    const beginMarker = `__MCP_BEGIN__${commandId}__`;
-    const beginIndex = buffer.indexOf(beginMarker);
-    if (beginIndex === -1) {
-      return null;
-    }
-
-    const beginLineEndIndex = buffer.indexOf("\n", beginIndex);
-    if (beginLineEndIndex === -1) {
-      return null;
-    }
-
-    const outputStartIndex = beginLineEndIndex + 1;
-    const tail = buffer.slice(outputStartIndex);
-    const endRegex = new RegExp(
-      `__MCP_END__${this.escapeRegExp(commandId)}__RC__(-?\\d+)__(?:\\r)?\\n`,
+  /**
+   * Drop the part of the tail that can no longer start a marker: a marker only
+   * straddles the boundary of the chunk that just arrived, so keeping the last
+   * `markerLength - 1` characters is enough.
+   */
+  private trimShellScanTail(
+    scanState: ShellScanState,
+    markerLength: number,
+  ): void {
+    this.advanceShellScanTail(
+      scanState,
+      scanState.tail.length - Math.min(scanState.tail.length, markerLength - 1),
     );
-    const matched = endRegex.exec(tail);
-    if (!matched) {
+  }
+
+  private advanceShellScanTail(
+    scanState: ShellScanState,
+    offset: number,
+  ): void {
+    if (offset <= 0) {
+      return;
+    }
+    scanState.tailStart += offset;
+    scanState.tail = scanState.tail.slice(offset);
+  }
+
+  /**
+   * Locate a finished command, scanning only the freshly arrived tail. The
+   * accumulated buffer is read once, after the whole end marker is in hand.
+   */
+  private extractShellCommandResult(
+    key: string,
+    commandId: string,
+    scanState: ShellScanState,
+  ): ShellCommandMatch | null {
+    if (scanState.outputStartIndex === -1) {
+      const beginMarker = `__MCP_BEGIN__${commandId}__`;
+      const beginIndex = scanState.tail.indexOf(beginMarker);
+      if (beginIndex === -1) {
+        this.trimShellScanTail(scanState, beginMarker.length);
+        return null;
+      }
+
+      const beginLineEndIndex = scanState.tail.indexOf("\n", beginIndex);
+      if (beginLineEndIndex === -1) {
+        this.advanceShellScanTail(scanState, beginIndex);
+        return null;
+      }
+
+      this.advanceShellScanTail(scanState, beginLineEndIndex + 1);
+      scanState.outputStartIndex = scanState.tailStart;
+    }
+
+    // Search the fixed prefix rather than the whole pattern: its length is
+    // known, which is what makes the retained overlap provably sufficient. The
+    // exit code is then parsed from the short slice that follows it.
+    const endPrefix = `__MCP_END__${commandId}__RC__`;
+    const endIndex = scanState.tail.indexOf(endPrefix);
+    if (endIndex === -1) {
+      this.trimShellScanTail(scanState, endPrefix.length);
       return null;
     }
 
-    const endIndex = outputStartIndex + matched.index;
-    const consumedEndIndex = endIndex + matched[0].length;
+    const exitCodeStart = endIndex + endPrefix.length;
+    const matched = SHELL_EXIT_CODE_PATTERN.exec(
+      scanState.tail.slice(
+        exitCodeStart,
+        exitCodeStart + SHELL_EXIT_CODE_MAX_LENGTH,
+      ),
+    );
+    if (!matched) {
+      // The prefix arrived but the exit code has not; resume from here.
+      this.advanceShellScanTail(scanState, endIndex);
+      return null;
+    }
+
+    const buffer = this.shellBuffers.get(key) || "";
+    const absoluteEndIndex = scanState.tailStart + endIndex;
+    const consumedEndIndex =
+      absoluteEndIndex + endPrefix.length + matched[0].length;
 
     return {
-      output: buffer.slice(outputStartIndex, endIndex),
+      output: buffer.slice(scanState.outputStartIndex, absoluteEndIndex),
       exitCode: Number.parseInt(matched[1], 10),
       remainder: buffer.slice(consumedEndIndex),
     };
   }
 
-  private appendShellBuffer(key: string, chunk: string): void {
+  /** Appends the decoded chunk and returns just that text. */
+  private appendShellBuffer(key: string, chunk: Buffer): string {
+    let decoder = this.shellDecoders.get(key);
+    if (!decoder) {
+      decoder = new StringDecoder("utf8");
+      this.shellDecoders.set(key, decoder);
+    }
+
+    // Concatenation alone stays cheap; it is reading the result that forces the
+    // rope to flatten, so nothing here may inspect the accumulated buffer.
+    const text = decoder.write(chunk);
     const current = this.shellBuffers.get(key) || "";
-    this.shellBuffers.set(key, current + chunk);
+    this.shellBuffers.set(key, current + text);
+    return text;
   }
 
   private cleanShellOutput(output: string): string {
@@ -2022,10 +2153,6 @@ export class SSHConnectionManager {
     return `${prefix}_${Date.now()}_${Math.random().toString(16).slice(2, 10)}`;
   }
 
-  private escapeRegExp(input: string): string {
-    return input.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  }
-
   private cleanupShellState(key: string, closeStream: boolean = false): void {
     const stream = this.shellStreams.get(key);
     if (closeStream && stream) {
@@ -2040,6 +2167,7 @@ export class SSHConnectionManager {
     this.shellReady.delete(key);
     this.shellQueues.delete(key);
     this.shellBuffers.delete(key);
+    this.shellDecoders.delete(key);
   }
 
   private clearConnectionState(key: string): void {
