@@ -3,7 +3,7 @@ import assert from 'node:assert';
 import { EventEmitter } from 'node:events';
 import http from 'node:http';
 import https from 'node:https';
-import { Writable } from 'node:stream';
+import { Readable, Writable } from 'node:stream';
 import { setTimeout as delay } from 'node:timers/promises';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
@@ -87,6 +87,72 @@ class FakeShellChannel extends EventEmitter {
 class FakeSftp extends EventEmitter {
   end() {
     this.emit('end');
+  }
+}
+
+function fakeStats(size, { isFile = true } = {}) {
+  return { size, isFile: () => isFile, isDirectory: () => !isFile };
+}
+
+/**
+ * SFTP double that records which transfer path the manager picked
+ * (fastGet/fastPut vs the sequential stream) and serves remote content.
+ */
+class FakeTransferSftp extends EventEmitter {
+  constructor(handlers = {}) {
+    super();
+    this.handlers = handlers;
+    this.statCalls = [];
+    this.fastGetCalls = [];
+    this.fastPutCalls = [];
+    this.readStreamCalls = [];
+    this.writeStreamCalls = [];
+    this.uploadedChunks = [];
+  }
+
+  end() {
+    this.emit('end');
+  }
+
+  stat(remotePath, callback) {
+    this.statCalls.push(remotePath);
+    const size = this.handlers.statSizes.length > 1
+      ? this.handlers.statSizes.shift()
+      : this.handlers.statSizes[0];
+    setImmediate(() => callback(undefined, fakeStats(size, this.handlers)));
+  }
+
+  fastGet(remotePath, localPath, options, callback) {
+    this.fastGetCalls.push({ remotePath, localPath, options });
+    const content = this.handlers.remoteContent.subarray(
+      0,
+      this.handlers.fastGetBytes ?? this.handlers.remoteContent.length,
+    );
+    fs.writeFileSync(localPath, content);
+    setImmediate(() => callback());
+  }
+
+  fastPut(localPath, remotePath, options, callback) {
+    this.fastPutCalls.push({ localPath, remotePath, options });
+    setImmediate(() => callback());
+  }
+
+  createReadStream(remotePath, options = {}) {
+    this.readStreamCalls.push({ remotePath, options });
+    return Readable.from([
+      this.handlers.remoteContent.subarray(options.start ?? 0),
+    ]);
+  }
+
+  createWriteStream(remotePath, options = {}) {
+    this.writeStreamCalls.push({ remotePath, options });
+    const chunks = this.uploadedChunks;
+    return new Writable({
+      write(chunk, _encoding, callback) {
+        chunks.push(Buffer.from(chunk));
+        callback();
+      },
+    });
   }
 }
 
@@ -1617,6 +1683,128 @@ describe('SSH Connection Manager', () => {
 
       const result = await manager.executeCommand('ls', "/tmp/it's", 'quote');
       assert.strictEqual(result, 'done');
+    });
+  });
+
+  describe('SFTP 并发传输', () => {
+    const FAST_MIN_BYTES = 256 * 1024;
+
+    function setupTransfer(sftp) {
+      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ssh-mcp-xfer-'));
+      const client = new FakeClient({
+        onConnect: () => setImmediate(() => client.emit('ready')),
+        onSftp: (callback) => callback(undefined, sftp),
+      });
+
+      manager.createClient = () => client;
+      manager.scheduleStatusCollection = () => {};
+      manager.setConfig({
+        exec: createPasswordConfig({
+          name: 'exec',
+          transportMode: 'exec',
+          allowedLocalPaths: [tempDir],
+        }),
+      });
+
+      return tempDir;
+    }
+
+    it('小文件上传仍走顺序流，不触发 fastPut', async () => {
+      const sftp = new FakeTransferSftp({ statSizes: [0] });
+      const tempDir = setupTransfer(sftp);
+      const localFile = path.join(tempDir, 'small.bin');
+      fs.writeFileSync(localFile, Buffer.alloc(1024, 7));
+
+      await manager.upload(localFile, '/remote/small.bin', 'exec');
+
+      assert.strictEqual(sftp.fastPutCalls.length, 0);
+      assert.strictEqual(sftp.writeStreamCalls.length, 1);
+      assert.strictEqual(
+        Buffer.concat(sftp.uploadedChunks).length,
+        1024,
+      );
+    });
+
+    it('大文件上传使用 fastPut 并发传输', async () => {
+      const sftp = new FakeTransferSftp({ statSizes: [FAST_MIN_BYTES] });
+      const tempDir = setupTransfer(sftp);
+      const localFile = path.join(tempDir, 'big.bin');
+      fs.writeFileSync(localFile, Buffer.alloc(FAST_MIN_BYTES, 7));
+
+      await manager.upload(localFile, '/remote/big.bin', 'exec');
+
+      assert.strictEqual(sftp.fastPutCalls.length, 1);
+      assert.strictEqual(sftp.writeStreamCalls.length, 0);
+      assert.strictEqual(sftp.fastPutCalls[0].options.concurrency, 64);
+      assert.strictEqual(sftp.fastPutCalls[0].options.chunkSize, 32 * 1024);
+    });
+
+    // fastGet plans its chunks from the reported size and treats 0 as "nothing
+    // to transfer" while still reporting success, so /proc-style pseudo files
+    // must never reach it.
+    it('远端 size 为 0 的伪文件走顺序流并拿到真实内容', async () => {
+      const content = Buffer.from('processor\t: 0\nmodel name\t: fake\n');
+      const sftp = new FakeTransferSftp({
+        statSizes: [0],
+        remoteContent: content,
+      });
+      const tempDir = setupTransfer(sftp);
+      const localFile = path.join(tempDir, 'cpuinfo');
+
+      await manager.download('/proc/cpuinfo', localFile, 'exec');
+
+      assert.strictEqual(sftp.fastGetCalls.length, 0);
+      assert.deepStrictEqual(fs.readFileSync(localFile), content);
+    });
+
+    it('远端目录不会走 fastGet', async () => {
+      const sftp = new FakeTransferSftp({
+        statSizes: [FAST_MIN_BYTES],
+        isFile: false,
+        remoteContent: Buffer.alloc(0),
+      });
+      const tempDir = setupTransfer(sftp);
+
+      await manager.download('/remote/dir', path.join(tempDir, 'dir'), 'exec');
+
+      assert.strictEqual(sftp.fastGetCalls.length, 0);
+      assert.strictEqual(sftp.readStreamCalls.length, 1);
+    });
+
+    it('大文件下载使用 fastGet 并发传输', async () => {
+      const content = Buffer.alloc(FAST_MIN_BYTES, 3);
+      const sftp = new FakeTransferSftp({
+        statSizes: [FAST_MIN_BYTES],
+        remoteContent: content,
+      });
+      const tempDir = setupTransfer(sftp);
+      const localFile = path.join(tempDir, 'big.bin');
+
+      await manager.download('/remote/big.bin', localFile, 'exec');
+
+      assert.strictEqual(sftp.fastGetCalls.length, 1);
+      assert.strictEqual(sftp.readStreamCalls.length, 0);
+      assert.deepStrictEqual(fs.readFileSync(localFile), content);
+    });
+
+    it('下载期间远端文件增长时补齐尾部', async () => {
+      const head = Buffer.alloc(FAST_MIN_BYTES, 1);
+      const tail = Buffer.from('appended-while-downloading');
+      const content = Buffer.concat([head, tail]);
+      const sftp = new FakeTransferSftp({
+        // 第一次 stat 决定走 fastGet，第二次 stat 时文件已变长。
+        statSizes: [head.length, content.length],
+        remoteContent: content,
+        fastGetBytes: head.length,
+      });
+      const tempDir = setupTransfer(sftp);
+      const localFile = path.join(tempDir, 'growing.log');
+
+      await manager.download('/remote/growing.log', localFile, 'exec');
+
+      assert.strictEqual(sftp.fastGetCalls.length, 1);
+      assert.deepStrictEqual(sftp.readStreamCalls[0].options.start, head.length);
+      assert.deepStrictEqual(fs.readFileSync(localFile), content);
     });
   });
 });
