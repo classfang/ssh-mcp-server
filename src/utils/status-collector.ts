@@ -7,6 +7,46 @@ type StatusCommandRunner = (
 ) => Promise<string>;
 
 /**
+ * Join the probes into a single remote command, each result introduced by a
+ * marker line.
+ *
+ * Running them separately costs one SSH channel per probe — open, pty request,
+ * exec and close, several round trips each — plus a remote shell per probe. In
+ * shell transport it is worse still: the per-connection queue serialises them,
+ * so the first command the user issues after connecting waits behind all of
+ * them.
+ *
+ * Every probe is wrapped so that a missing tool or a non-zero exit cannot
+ * abort the rest, and the whole script ends successfully.
+ */
+function buildStatusScript(
+  commands: Record<string, string>,
+  marker: string,
+): string {
+  const probes = Object.entries(commands).map(
+    ([field, command]) =>
+      `printf '\\n${marker}${field}\\n'; { ${command}; } 2>/dev/null`,
+  );
+  return `${probes.join("; ")}; true`;
+}
+
+function parseStatusScriptOutput(
+  output: string,
+  marker: string,
+): Map<string, string> {
+  const values = new Map<string, string>();
+  const normalized = output.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  // Splitting on a capturing group yields [before, field, value, field, ...].
+  const segments = normalized.split(new RegExp(`\\n?${marker}(\\w+)\\n`));
+
+  for (let index = 1; index < segments.length; index += 2) {
+    values.set(segments[index], (segments[index + 1] ?? "").trim());
+  }
+
+  return values;
+}
+
+/**
  * Collect system status information from remote server
  */
 export async function collectSystemStatus(
@@ -19,35 +59,7 @@ export async function collectSystemStatus(
   };
 
   try {
-    const runCommandsWithConcurrencyLimit = async (
-      commands: string[],
-      limit: number,
-    ): Promise<string[]> => {
-      const results = new Array<string>(commands.length).fill("");
-      let nextIndex = 0;
-
-      const worker = async (): Promise<void> => {
-        while (nextIndex < commands.length) {
-          const currentIndex = nextIndex++;
-          try {
-            results[currentIndex] = await runCommand(
-              commands[currentIndex],
-              connectionName,
-            );
-          } catch {
-            results[currentIndex] = "";
-          }
-        }
-      };
-
-      const workerCount = Math.min(limit, commands.length);
-      await Promise.all(
-        Array.from({ length: workerCount }, async () => worker()),
-      );
-
-      return results;
-    };
-    // Collect all status information in parallel where possible
+    // Collected in a single remote command; see buildStatusScript.
     const commands = {
       hostname: "hostname",
       ipAddresses: "ip -o addr show | awk '{print $4}' | grep -v '^127\\.' | cut -d'/' -f1",
@@ -69,50 +81,41 @@ export async function collectSystemStatus(
       servicesInstalled: "systemctl list-unit-files --type=service 2>/dev/null | wc -l || ls /etc/init.d/ 2>/dev/null | wc -l || echo '0'",
     };
 
-    // Execute commands and collect results
-    const resultValues = await runCommandsWithConcurrencyLimit(
-      [
-        commands.hostname,
-        commands.ipAddresses,
-        commands.osName,
-        commands.osVersion,
-        commands.kernelVersion,
-        commands.uptime,
-        commands.diskSpace,
-        commands.memory,
-        commands.cpuName,
-        commands.cpuUsage,
-        commands.gpus,
-        commands.gpuPaths,
-        commands.drives,
-        commands.processes,
-        commands.threads,
-        commands.servicesRunning,
-        commands.servicesInstalled,
-      ],
-      3,
-    );
+    // Execute the probes and collect results
+    const marker = `__MCP_FIELD_${Math.random().toString(16).slice(2, 10)}_`;
+    let values = new Map<string, string>();
+    try {
+      values = parseStatusScriptOutput(
+        await runCommand(buildStatusScript(commands, marker), connectionName),
+        marker,
+      );
+    } catch {
+      // A rejected command (an unreachable host, a command whitelist that does
+      // not admit the probe) leaves every field unset, the same as when the
+      // probes ran separately and each failed on its own.
+    }
 
     // Parse results
-    const [
-      hostnameValue,
-      ipAddressesValue,
-      osNameValue,
-      osVersionValue,
-      kernelVersionValue,
-      uptimeValue,
-      diskSpaceValue,
-      memoryValue,
-      cpuNameValue,
-      cpuUsageValue,
-      gpusValue,
-      gpuPathsValue,
-      drivesValue,
-      processesValue,
-      threadsValue,
-      servicesRunningValue,
-      servicesInstalledValue,
-    ] = resultValues;
+    const readField = (field: keyof typeof commands): string =>
+      values.get(field) ?? "";
+
+    const hostnameValue = readField("hostname");
+    const ipAddressesValue = readField("ipAddresses");
+    const osNameValue = readField("osName");
+    const osVersionValue = readField("osVersion");
+    const kernelVersionValue = readField("kernelVersion");
+    const uptimeValue = readField("uptime");
+    const diskSpaceValue = readField("diskSpace");
+    const memoryValue = readField("memory");
+    const cpuNameValue = readField("cpuName");
+    const cpuUsageValue = readField("cpuUsage");
+    const gpusValue = readField("gpus");
+    const gpuPathsValue = readField("gpuPaths");
+    const drivesValue = readField("drives");
+    const processesValue = readField("processes");
+    const threadsValue = readField("threads");
+    const servicesRunningValue = readField("servicesRunning");
+    const servicesInstalledValue = readField("servicesInstalled");
 
     if (hostnameValue) {
       status.hostname = hostnameValue;
