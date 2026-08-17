@@ -536,13 +536,13 @@ This is particularly useful for commands like `ping`, `tail -f`, or other long-r
 
 ### 📦 Command Output Limit
 
-In `exec` mode, the combined captured `stdout` and `stderr` for each command is limited to protect the MCP server from large files or unbounded output:
+The combined captured `stdout` and `stderr` for each command is limited to protect the MCP server from large files or unbounded output:
 
 - Set `maxOutputBytes` in a JSON connection configuration; the default is `10485760` bytes (10 MiB)
 - `maxOutputBytes` must be a non-negative integer; `0` disables the limit, which is not recommended for untrusted commands
 - When output exceeds the limit, the remote command is aborted and the tool returns an `OUTPUT_LIMIT_EXCEEDED` error with the captured, truncated output instead of reporting success
 - With `pty: false`, warnings and progress written to `stderr` by successful commands are preserved in a `[stderr]` section
-- The limit currently applies only to `exec` mode; `shell` mode does not use `maxOutputBytes`
+- The limit applies to both `exec` and `shell` mode. `exec` mode closes just that command's channel, whereas the `shell` channel is shared by every command on the connection and the remote keeps writing after an abort, so the connection is dropped instead — the same way a shell mode command timeout behaves
 
 ### 🗂️ List All SSH Servers
 
