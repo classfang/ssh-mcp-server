@@ -1639,4 +1639,163 @@ describe('SSH Connection Manager', () => {
       assert.strictEqual(result, 'done');
     });
   });
+
+  describe('输出解码与上限', () => {
+    // Emit `payload` in fixed-size byte slices so multi-byte characters and
+    // markers are split across chunk boundaries.
+    function emitInByteSlices(emit, payload, sliceSize) {
+      const bytes = Buffer.from(payload, 'utf8');
+      for (let i = 0; i < bytes.length; i += sliceSize) {
+        emit(bytes.subarray(i, i + sliceSize));
+      }
+    }
+
+    async function connectShell(channel, overrides = {}) {
+      channel.on('write', (payload) => {
+        const readyId = extractMarkerId(payload, '__MCP_READY__');
+        if (readyId) {
+          setImmediate(() => {
+            channel.emit('data', Buffer.from(`__MCP_READY__${readyId}__\n`));
+          });
+        }
+      });
+
+      const client = new FakeClient({
+        onConnect: () => setImmediate(() => client.emit('ready')),
+        onShell: ({ callback }) => callback(undefined, channel),
+      });
+
+      manager.createClient = () => client;
+      manager.scheduleStatusCollection = () => {};
+      manager.setConfig({
+        shell: createPasswordConfig({ transportMode: 'shell', ...overrides }),
+      });
+
+      await manager.connect('shell');
+      return client;
+    }
+
+    it('exec 模式跨块的多字节字符不会损坏', async () => {
+      const text = '中文输出测试内容';
+      const stream = new FakeExecStream();
+      const client = new FakeClient({
+        onConnect: () => setImmediate(() => client.emit('ready')),
+        onExec: ({ callback }) => {
+          callback(undefined, stream);
+          setImmediate(() => {
+            emitInByteSlices(
+              (slice) => stream.emit('data', slice),
+              text,
+              5,
+            );
+            stream.emit('exit', 0);
+            stream.emit('close', 0);
+          });
+        },
+      });
+
+      manager.createClient = () => client;
+      manager.scheduleStatusCollection = () => {};
+      manager.setConfig({
+        exec: createPasswordConfig({ name: 'exec', transportMode: 'exec' }),
+      });
+
+      assert.strictEqual(
+        await manager.executeCommand('cat zh.txt', undefined, 'exec'),
+        text,
+      );
+    });
+
+    it('shell 模式跨块的多字节字符与 marker 都能正确还原', async () => {
+      const text = '中文输出测试内容';
+      const channel = new FakeShellChannel();
+      let commandId;
+      channel.on('write', (payload) => {
+        commandId = extractMarkerId(payload, '__MCP_BEGIN__') ?? commandId;
+      });
+
+      await connectShell(channel);
+      const pending = manager.executeCommand('cat zh.txt', undefined, 'shell');
+      await delay(0);
+
+      // 5 字节一片：既切断多字节字符，也切断 marker 本身
+      emitInByteSlices(
+        (slice) => channel.emit('data', slice),
+        `__MCP_BEGIN__${commandId}__\r\n${text}\n__MCP_END__${commandId}__RC__0__\r\n`,
+        5,
+      );
+
+      assert.strictEqual(await pending, text);
+    });
+
+    it('shell 模式 marker 逐字节到达仍能识别', async () => {
+      const channel = new FakeShellChannel();
+      let commandId;
+      channel.on('write', (payload) => {
+        commandId = extractMarkerId(payload, '__MCP_BEGIN__') ?? commandId;
+      });
+
+      await connectShell(channel);
+      const pending = manager.executeCommand('echo hi', undefined, 'shell');
+      await delay(0);
+
+      emitInByteSlices(
+        (slice) => channel.emit('data', slice),
+        `__MCP_BEGIN__${commandId}__\r\nhi\n__MCP_END__${commandId}__RC__0__\r\n`,
+        1,
+      );
+
+      assert.strictEqual(await pending, 'hi');
+    });
+
+    it('shell 模式退出码晚于 marker 前缀到达仍能识别', async () => {
+      const channel = new FakeShellChannel();
+      let commandId;
+      channel.on('write', (payload) => {
+        commandId = extractMarkerId(payload, '__MCP_BEGIN__') ?? commandId;
+      });
+
+      await connectShell(channel);
+      const pending = manager.executeCommand('false', undefined, 'shell');
+      await delay(0);
+
+      channel.emit(
+        'data',
+        Buffer.from(`__MCP_BEGIN__${commandId}__\r\noops\n__MCP_END__${commandId}__RC__`),
+      );
+      await delay(0);
+      channel.emit('data', Buffer.from('3__\r\n'));
+
+      await assert.rejects(pending, (error) => {
+        assert.strictEqual(error.code, 'COMMAND_EXECUTION_ERROR');
+        assert.match(error.message, /\[exit code\] 3/);
+        return true;
+      });
+    });
+
+    it('shell 模式超出 maxOutputBytes 会中止命令并失效连接', async () => {
+      const channel = new FakeShellChannel();
+      let commandId;
+      channel.on('write', (payload) => {
+        commandId = extractMarkerId(payload, '__MCP_BEGIN__') ?? commandId;
+      });
+
+      const client = await connectShell(channel, { maxOutputBytes: 1024 });
+      const pending = manager.executeCommand('yes', undefined, 'shell');
+      await delay(0);
+
+      channel.emit('data', Buffer.from(`__MCP_BEGIN__${commandId}__\r\n`));
+      channel.emit('data', Buffer.alloc(4096, 0x78));
+
+      await assert.rejects(pending, (error) => {
+        assert.ok(error instanceof ToolError);
+        assert.strictEqual(error.code, 'OUTPUT_LIMIT_EXCEEDED');
+        assert.match(error.message, /maxOutputBytes=1024/);
+        return true;
+      });
+
+      assert.strictEqual(manager.getAllServerInfos()[0].connected, false);
+      assert.strictEqual(client.endCalls, 1);
+    });
+  });
 });

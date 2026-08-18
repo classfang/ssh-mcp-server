@@ -542,13 +542,13 @@ npx @fangjunjie/ssh-mcp-server \
 
 ### 📦 命令输出限制
 
-`exec` 模式会限制单条命令捕获的 `stdout` 和 `stderr` 总量，避免大文件或无限输出耗尽 MCP server 内存：
+会限制单条命令捕获的 `stdout` 和 `stderr` 总量，避免大文件或无限输出耗尽 MCP server 内存：
 
 - 在 JSON 连接配置中使用 `maxOutputBytes` 设置上限，默认值为 `10485760`（10 MiB）
 - `maxOutputBytes` 必须是非负整数；设置为 `0` 可禁用限制，但不建议对不受信任的命令禁用
 - 输出超过限制时，远端命令会被中止，工具返回 `OUTPUT_LIMIT_EXCEEDED` 错误和已经捕获的截断输出，不会把中止的命令误报为成功
 - 当 `pty` 为 `false` 时，成功命令写入 `stderr` 的警告或进度信息会保留在 `[stderr]` 区段中
-- 该限制目前仅适用于 `exec` 模式；`shell` 模式不使用 `maxOutputBytes`
+- `exec` 与 `shell` 两种模式都会应用该限制。区别在于 `exec` 模式只关闭该命令的通道，而 `shell` 模式的通道由该连接上的所有命令共用、远端在中止后仍会继续写入，因此会断开连接（与 shell 模式命令超时的处理一致）
 
 ### 🗂️ 列出所有SSH服务器
 
