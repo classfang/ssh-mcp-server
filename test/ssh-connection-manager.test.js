@@ -384,6 +384,34 @@ describe('SSH Connection Manager', () => {
       }
     });
 
+    // 调用方看不到 MCP server 的工作目录，只说“必须在工作目录内”等于没给出可纠正的信息。
+    it('本地路径被拒时应指出解析结果和允许的根路径', () => {
+      const allowedRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ssh-mcp-allowed-'));
+
+      try {
+        manager.setConfig({
+          dev: createPasswordConfig({
+            name: 'dev',
+            allowedLocalPaths: [allowedRoot],
+          }),
+        });
+
+        assert.throws(
+          () => manager.validateLocalPath(path.resolve(path.sep, 'etc', 'passwd'), 'dev'),
+          (error) => {
+            assert.strictEqual(error.code, 'LOCAL_PATH_NOT_ALLOWED');
+            assert.match(error.message, /Allowed local paths for this connection:/);
+            assert.ok(error.message.includes(fs.realpathSync.native(allowedRoot)));
+            assert.ok(error.message.includes(fs.realpathSync.native(process.cwd())));
+            assert.match(error.message, /resolved to:/);
+            return true;
+          },
+        );
+      } finally {
+        fs.rmSync(allowedRoot, { recursive: true, force: true });
+      }
+    });
+
     it('本地路径校验应拒绝通过符号链接逃出允许目录', (t) => {
       const allowedRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ssh-mcp-allowed-'));
       const outsideRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ssh-mcp-outside-'));
@@ -1445,6 +1473,62 @@ describe('SSH Connection Manager', () => {
 
       assert.strictEqual(manager.getAllServerInfos()[0].connected, false);
       assert.strictEqual(client.endCalls, 1);
+    });
+
+    it('exec 模式使用配置的 commandTimeoutMs 作为默认超时', async () => {
+      const client = new FakeClient({
+        onConnect: () => setImmediate(() => client.emit('ready')),
+        onExec: () => {
+          // Never calls back, so the command can only end on a timeout.
+        },
+      });
+
+      manager.createClient = () => client;
+      manager.scheduleStatusCollection = () => {};
+      manager.setConfig({
+        exec: createPasswordConfig({
+          name: 'exec',
+          transportMode: 'exec',
+          commandTimeoutMs: 20,
+        }),
+      });
+
+      const startedAt = Date.now();
+      await assert.rejects(
+        // 不传 timeout：默认值必须来自配置，而不是写死的 30000
+        () => manager.executeCommand('pwd', undefined, 'exec'),
+        (error) => {
+          assert.strictEqual(error.code, 'COMMAND_TIMEOUT');
+          assert.match(error.message, /within 20ms/);
+          return true;
+        },
+      );
+      assert.ok(Date.now() - startedAt < 5000);
+    });
+
+    it('调用参数里的 timeout 仍然覆盖 commandTimeoutMs', async () => {
+      const client = new FakeClient({
+        onConnect: () => setImmediate(() => client.emit('ready')),
+        onExec: () => {},
+      });
+
+      manager.createClient = () => client;
+      manager.scheduleStatusCollection = () => {};
+      manager.setConfig({
+        exec: createPasswordConfig({
+          name: 'exec',
+          transportMode: 'exec',
+          commandTimeoutMs: 900000,
+        }),
+      });
+
+      await assert.rejects(
+        () => manager.executeCommand('pwd', undefined, 'exec', { timeout: 20 }),
+        (error) => {
+          assert.match(error.message, /within 20ms/);
+          return true;
+        },
+      );
     });
 
     it('SFTP open 卡住时会按 sftpTimeoutMs 失效连接', async () => {

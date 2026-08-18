@@ -70,6 +70,7 @@ const SHELL_EXIT_CODE_MAX_LENGTH = 32;
 const COMMAND_TEMPLATE_PLACEHOLDER = "<command>";
 const QUOTED_COMMAND_TEMPLATE_PLACEHOLDER = "<quotedCommand>";
 const DEFAULT_CONNECTION_TIMEOUT_MS = 30000;
+const DEFAULT_COMMAND_TIMEOUT_MS = 30000;
 const DEFAULT_KEEPALIVE_INTERVAL_MS = 10000;
 const DEFAULT_KEEPALIVE_COUNT_MAX = 3;
 const DEFAULT_SFTP_TIMEOUT_MS = 300000;
@@ -108,6 +109,15 @@ function applyCommandTemplate(template: string, command: string): string {
 
 function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
+/**
+ * The caller cannot see the process working directory, so a rejection that only
+ * says "must be within the working directory" leaves it nothing to correct
+ * against. Name the roots instead.
+ */
+function describeAllowedRoots(allowedRoots: string[]): string {
+  return `Allowed local paths for this connection: ${allowedRoots.join(", ")}.`;
 }
 
 function isPathWithinRoot(candidate: string, root: string): boolean {
@@ -477,7 +487,9 @@ export class SSHConnectionManager {
     if (purpose === "write" && !parentRealPath) {
       throw new ToolError(
         "LOCAL_PATH_NOT_ALLOWED",
-        "Local path parent directory must exist and be within an allowed local path.",
+        `Local path parent directory must exist and be within an allowed local path. Resolved to: ${resolvedPath}. ${describeAllowedRoots(
+          allowedRoots,
+        )}`,
         false,
       );
     }
@@ -489,7 +501,9 @@ export class SSHConnectionManager {
     if (!isAllowed) {
       throw new ToolError(
         "LOCAL_PATH_NOT_ALLOWED",
-        "Path traversal detected. Local path must be within the working directory or configured allowed local paths for this connection.",
+        `Path traversal detected. Local path resolved to: ${pathToCheck}. ${describeAllowedRoots(
+          allowedRoots,
+        )}`,
         false,
       );
     }
@@ -1062,7 +1076,11 @@ export class SSHConnectionManager {
   }
 
   private getShellCommandTimeoutMs(config: SSHConfig): number {
-    return config.shellCommandTimeoutMs || 30000;
+    return config.shellCommandTimeoutMs || DEFAULT_COMMAND_TIMEOUT_MS;
+  }
+
+  private getCommandTimeoutMs(config: SSHConfig): number {
+    return config.commandTimeoutMs || DEFAULT_COMMAND_TIMEOUT_MS;
   }
 
   private getConnectionTimeoutMs(config: SSHConfig): number {
@@ -1604,7 +1622,7 @@ export class SSHConnectionManager {
       options.timeout ??
       (transportMode === "shell"
         ? this.getShellCommandTimeoutMs(config)
-        : 30000);
+        : this.getCommandTimeoutMs(config));
     const connectionTimeoutMs = this.getConnectionTimeoutMs(config);
     const client = await this.withTimeout(
       this.ensureConnected(name),

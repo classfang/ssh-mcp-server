@@ -147,6 +147,58 @@ Host testhost
       }
     });
 
+    it('应从配置文件解析 commandTimeoutMs', () => {
+      const timeoutConfigPath = path.join(fixturesDir, 'command-timeout-config.json');
+      fs.writeFileSync(timeoutConfigPath, JSON.stringify({
+        slow: {
+          host: '192.168.1.100',
+          port: 22,
+          username: 'slow-user',
+          password: 'slow-pass',
+          commandTimeoutMs: 180000
+        },
+        plain: {
+          host: '192.168.1.101',
+          port: 22,
+          username: 'plain-user',
+          password: 'plain-pass'
+        }
+      }));
+
+      try {
+        process.argv = ['node', 'test', '--config-file', timeoutConfigPath];
+        const result = CommandLineParser.parseArgs();
+
+        assert.strictEqual(result.configs.slow.commandTimeoutMs, 180000);
+        assert.strictEqual(result.configs.plain.commandTimeoutMs, undefined);
+      } finally {
+        fs.unlinkSync(timeoutConfigPath);
+      }
+    });
+
+    it('无效的 commandTimeoutMs 应抛出错误', () => {
+      const invalidTimeoutPath = path.join(fixturesDir, 'invalid-command-timeout-config.json');
+      fs.writeFileSync(invalidTimeoutPath, JSON.stringify({
+        invalid: {
+          host: '192.168.1.100',
+          port: 22,
+          username: 'invalid-user',
+          password: 'invalid-pass',
+          commandTimeoutMs: 0
+        }
+      }));
+
+      try {
+        process.argv = ['node', 'test', '--config-file', invalidTimeoutPath];
+        assert.throws(
+          () => CommandLineParser.parseArgs(),
+          /commandTimeoutMs must be a positive number/,
+        );
+      } finally {
+        fs.unlinkSync(invalidTimeoutPath);
+      }
+    });
+
     it('无效的 maxOutputBytes 应抛出错误', () => {
       const invalidConfigPath = path.join(fixturesDir, 'invalid-output-limit-config.json');
       fs.writeFileSync(invalidConfigPath, JSON.stringify({

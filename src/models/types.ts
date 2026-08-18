@@ -24,6 +24,7 @@ export interface SSHConfig {
   transportMode?: "exec" | "shell"; // SSH transport mode, default: exec
   shellReadyTimeoutMs?: number; // Shell readiness probe timeout, default: 10000ms
   shellCommandTimeoutMs?: number; // Shell command timeout override, default: 30000ms
+  commandTimeoutMs?: number; // Exec command timeout override, default: 30000ms
   connectionTimeoutMs?: number; // SSH connection and handshake timeout, default: 30000ms
   sftpTimeoutMs?: number; // SFTP open and transfer timeout, default: 300000ms
   maxOutputBytes?: number; // Max captured bytes per command (stdout+stderr) before aborting, default: 10485760; set 0 to disable
