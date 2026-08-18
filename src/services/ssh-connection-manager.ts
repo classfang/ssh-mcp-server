@@ -1,5 +1,5 @@
 import { createRequire } from "node:module";
-import type { Client, ClientChannel, SFTPWrapper } from "ssh2";
+import type { Client, ClientChannel, SFTPWrapper, Stats } from "ssh2";
 import {
   SSHConfig,
   SshConnectionConfigMap,
@@ -71,6 +71,24 @@ const DEFAULT_KEEPALIVE_INTERVAL_MS = 10000;
 const DEFAULT_KEEPALIVE_COUNT_MAX = 3;
 const DEFAULT_SFTP_TIMEOUT_MS = 300000;
 const DEFAULT_MAX_OUTPUT_BYTES = 10 * 1024 * 1024;
+
+// ssh2's SFTP ReadStream/WriteStream keep a single request in flight, so
+// transfer throughput is capped at one chunk per round trip regardless of the
+// available bandwidth. fastGet/fastPut pipeline `concurrency` chunks instead,
+// which is what makes large transfers usable on high latency links.
+const SFTP_FAST_TRANSFER_OPTIONS = {
+  concurrency: 64,
+  chunkSize: 32 * 1024,
+} as const;
+
+// Under this size the streaming path already completes in a couple of round
+// trips, so the extra stat fastGet needs would cost more than the concurrency
+// saves. Staying on the streaming path below the threshold also keeps the
+// existing behaviour for files whose reported size is unusable: fastGet/fastPut
+// plan their chunks from that size and treat `size <= 0` as "nothing to
+// transfer", which would silently produce an empty file for pseudo files such
+// as /proc/cpuinfo.
+const SFTP_FAST_TRANSFER_MIN_BYTES = 256 * 1024;
 
 function applyCommandTemplate(template: string, command: string): string {
   const quotedCommand = shellQuote(command);
@@ -572,15 +590,43 @@ export class SSHConnectionManager {
     );
 
     try {
-      await this.withTimeout(
-        pipeline(
-          fs.createReadStream(validatedLocalPath),
-          sftp.createWriteStream(validatedRemotePath),
-        ),
-        sftpTimeoutMs,
-        () => this.invalidateConnection(key),
-        `SFTP upload timed out after ${sftpTimeoutMs}ms`,
+      const localSize = await this.getLocalSizeForFastTransfer(
+        validatedLocalPath,
       );
+
+      if (localSize === undefined) {
+        await this.withTimeout(
+          pipeline(
+            fs.createReadStream(validatedLocalPath),
+            sftp.createWriteStream(validatedRemotePath),
+          ),
+          sftpTimeoutMs,
+          () => this.invalidateConnection(key),
+          `SFTP upload timed out after ${sftpTimeoutMs}ms`,
+        );
+      } else {
+        await this.withTimeout(
+          new Promise<void>((resolve, reject) => {
+            sftp.fastPut(
+              validatedLocalPath,
+              validatedRemotePath,
+              SFTP_FAST_TRANSFER_OPTIONS,
+              (err) => (err ? reject(err) : resolve()),
+            );
+          }),
+          sftpTimeoutMs,
+          () => this.invalidateConnection(key),
+          `SFTP upload timed out after ${sftpTimeoutMs}ms`,
+        );
+        await this.appendUploadTail(
+          sftp,
+          validatedLocalPath,
+          validatedRemotePath,
+          localSize,
+          sftpTimeoutMs,
+          key,
+        );
+      }
       return "File uploaded successfully";
     } catch (error) {
       if (error instanceof ToolError && error.code === "OPERATION_TIMEOUT") {
@@ -636,15 +682,49 @@ export class SSHConnectionManager {
       .slice(2)}`;
 
     try {
-      await this.withTimeout(
-        pipeline(
-          sftp.createReadStream(validatedRemotePath),
-          fs.createWriteStream(tempLocalPath, { flags: "wx" }),
-        ),
+      const remoteSize = await this.getRemoteSizeForFastTransfer(
+        sftp,
+        validatedRemotePath,
         sftpTimeoutMs,
-        () => this.invalidateConnection(key),
-        `SFTP download timed out after ${sftpTimeoutMs}ms`,
+        key,
       );
+
+      if (remoteSize === undefined) {
+        await this.withTimeout(
+          pipeline(
+            sftp.createReadStream(validatedRemotePath),
+            fs.createWriteStream(tempLocalPath, { flags: "wx" }),
+          ),
+          sftpTimeoutMs,
+          () => this.invalidateConnection(key),
+          `SFTP download timed out after ${sftpTimeoutMs}ms`,
+        );
+      } else {
+        // fastGet opens the destination with "w", which would drop the
+        // exclusive-create guarantee the streaming path gets from "wx".
+        // Claiming the temp name first keeps it.
+        await fs.promises.writeFile(tempLocalPath, "", { flag: "wx" });
+        await this.withTimeout(
+          new Promise<void>((resolve, reject) => {
+            sftp.fastGet(
+              validatedRemotePath,
+              tempLocalPath,
+              SFTP_FAST_TRANSFER_OPTIONS,
+              (err) => (err ? reject(err) : resolve()),
+            );
+          }),
+          sftpTimeoutMs,
+          () => this.invalidateConnection(key),
+          `SFTP download timed out after ${sftpTimeoutMs}ms`,
+        );
+        await this.appendDownloadTail(
+          sftp,
+          validatedRemotePath,
+          tempLocalPath,
+          sftpTimeoutMs,
+          key,
+        );
+      }
       await fs.promises.rename(tempLocalPath, validatedLocalPath);
       return "File downloaded successfully";
     } catch (error) {
@@ -689,6 +769,138 @@ export class SSHConnectionManager {
         resolve(sftp);
       });
     });
+  }
+
+  private statRemote(
+    sftp: SFTPWrapper,
+    remotePath: string,
+  ): Promise<Stats> {
+    return new Promise<Stats>((resolve, reject) => {
+      sftp.stat(remotePath, (err, stats) =>
+        err ? reject(err) : resolve(stats),
+      );
+    });
+  }
+
+  /**
+   * Size to hand to the concurrent transfer path, or undefined to stay on the
+   * streaming path. Anything unexpected — a missing file, a directory, a
+   * server without stat support — falls back so the streaming path reports the
+   * same error it reports today.
+   */
+  private async getRemoteSizeForFastTransfer(
+    sftp: SFTPWrapper,
+    remotePath: string,
+    timeoutMs: number,
+    key: string,
+  ): Promise<number | undefined> {
+    let stats: Stats;
+    try {
+      stats = await this.withTimeout(
+        this.statRemote(sftp, remotePath),
+        timeoutMs,
+        () => this.invalidateConnection(key),
+        `SFTP stat timed out after ${timeoutMs}ms`,
+      );
+    } catch (error) {
+      // A timeout already tore the connection down, so it has to surface.
+      if (error instanceof ToolError) {
+        throw error;
+      }
+      return undefined;
+    }
+
+    return stats.isFile() && stats.size >= SFTP_FAST_TRANSFER_MIN_BYTES
+      ? stats.size
+      : undefined;
+  }
+
+  private async getLocalSizeForFastTransfer(
+    localPath: string,
+  ): Promise<number | undefined> {
+    try {
+      const stats = await fs.promises.stat(localPath);
+      return stats.isFile() && stats.size >= SFTP_FAST_TRANSFER_MIN_BYTES
+        ? stats.size
+        : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
+   * fastGet transfers exactly the byte count the remote file had when it
+   * started, so data appended while it ran would be dropped. The streaming path
+   * reads until EOF and would have picked that tail up, so fetch it here to
+   * keep both paths equivalent for files that are still being written.
+   */
+  private async appendDownloadTail(
+    sftp: SFTPWrapper,
+    remotePath: string,
+    tempLocalPath: string,
+    timeoutMs: number,
+    key: string,
+  ): Promise<void> {
+    const downloadedBytes = (await fs.promises.stat(tempLocalPath)).size;
+    const stats = await this.withTimeout(
+      this.statRemote(sftp, remotePath),
+      timeoutMs,
+      () => this.invalidateConnection(key),
+      `SFTP stat timed out after ${timeoutMs}ms`,
+    );
+
+    if (stats.size <= downloadedBytes) {
+      return;
+    }
+
+    await this.withTimeout(
+      pipeline(
+        sftp.createReadStream(remotePath, { start: downloadedBytes }),
+        fs.createWriteStream(tempLocalPath, { flags: "a" }),
+      ),
+      timeoutMs,
+      () => this.invalidateConnection(key),
+      `SFTP download timed out after ${timeoutMs}ms`,
+    );
+  }
+
+  /**
+   * Upload counterpart of appendDownloadTail. The local stat is free, so the
+   * remote round trip only happens when the local file actually grew.
+   */
+  private async appendUploadTail(
+    sftp: SFTPWrapper,
+    localPath: string,
+    remotePath: string,
+    sizeBeforeTransfer: number,
+    timeoutMs: number,
+    key: string,
+  ): Promise<void> {
+    const currentLocalSize = (await fs.promises.stat(localPath)).size;
+    if (currentLocalSize <= sizeBeforeTransfer) {
+      return;
+    }
+
+    const stats = await this.withTimeout(
+      this.statRemote(sftp, remotePath),
+      timeoutMs,
+      () => this.invalidateConnection(key),
+      `SFTP stat timed out after ${timeoutMs}ms`,
+    );
+
+    if (stats.size >= currentLocalSize) {
+      return;
+    }
+
+    await this.withTimeout(
+      pipeline(
+        fs.createReadStream(localPath, { start: stats.size }),
+        sftp.createWriteStream(remotePath, { flags: "a" }),
+      ),
+      timeoutMs,
+      () => this.invalidateConnection(key),
+      `SFTP upload timed out after ${timeoutMs}ms`,
+    );
   }
 
   private closeSftp(sftp: SFTPWrapper): void {
