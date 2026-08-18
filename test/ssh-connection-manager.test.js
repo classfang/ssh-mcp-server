@@ -530,7 +530,7 @@ describe('SSH Connection Manager', () => {
       manager.setConfig({
         dev: createPasswordConfig({
           name: 'dev',
-          commandWhitelist: ['^echo$'],
+          commandWhitelist: ['^hostname$'],
         }),
       });
 
@@ -554,7 +554,13 @@ describe('SSH Connection Manager', () => {
       }
 
       assert.ok(seenCalls.length > 0);
-      assert.ok(seenCalls.every((call) => call.options === undefined));
+      assert.ok(
+        seenCalls.every(
+          (call) => call.options?.prevalidatedInternalCommand === true,
+        ),
+      );
+      assert.ok(seenCalls.every((call) => call.command.includes('hostname')));
+      assert.ok(seenCalls.every((call) => !call.command.includes('uname -s')));
       assert.strictEqual(manager.statusCache.get('dev').reachable, true);
     });
 
@@ -1862,6 +1868,28 @@ describe('SSH Connection Manager', () => {
 
       assert.strictEqual(manager.getAllServerInfos()[0].connected, false);
       assert.strictEqual(client.endCalls, 1);
+    });
+
+    it('shell 模式只统计 marker 之间的命令输出字节', async () => {
+      const channel = new FakeShellChannel();
+      let commandId;
+      channel.on('write', (payload) => {
+        commandId = extractMarkerId(payload, '__MCP_BEGIN__') ?? commandId;
+      });
+
+      await connectShell(channel, { maxOutputBytes: 1 });
+      const pending = manager.executeCommand('printf x', undefined, 'shell');
+      await delay(0);
+
+      // BEGIN/END markers and the wrapper's CRLF are protocol framing. Only
+      // the single "x" byte should count against the one-byte limit.
+      emitInByteSlices(
+        (slice) => channel.emit('data', slice),
+        `__MCP_BEGIN__${commandId}__\r\nx\r\n__MCP_END__${commandId}__RC__0__\r\n`,
+        3,
+      );
+
+      assert.strictEqual(await pending, 'x');
     });
   });
 

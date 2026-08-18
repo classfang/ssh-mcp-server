@@ -18,6 +18,7 @@ const require = createRequire(import.meta.url);
 
 type RunCommandOptions = {
   timeout?: number;
+  prevalidatedInternalCommand?: boolean;
 };
 
 type LocalPathPurpose = "read" | "write";
@@ -46,6 +47,8 @@ type ShellScanState = {
   outputStartIndex: number;
   tail: string;
   tailStart: number;
+  countedOutputEndIndex: number;
+  capturedOutputBytes: number;
 };
 
 type SshAuthMethod =
@@ -1456,8 +1459,12 @@ export class SSHConnectionManager {
     try {
       const status = await collectSystemStatus(
         (command, connectionName) =>
-          this.runCommandInternal(command, undefined, connectionName),
+          this.runCommandInternal(command, undefined, connectionName, {
+            prevalidatedInternalCommand: true,
+          }),
         key,
+        (command, connectionName) =>
+          this.validateCommand(command, connectionName).isAllowed,
       );
       this.statusCache.set(key, status);
       Logger.log(`System status collected for [${key}]`, "info");
@@ -1579,13 +1586,15 @@ export class SSHConnectionManager {
     name?: string,
     options: RunCommandOptions = {},
   ): Promise<string> {
-    const validationResult = this.validateCommand(cmdString, name);
-    if (!validationResult.isAllowed) {
-      throw new ToolError(
-        "COMMAND_VALIDATION_FAILED",
-        `Command validation failed: ${validationResult.reason}`,
-        false,
-      );
+    if (!options.prevalidatedInternalCommand) {
+      const validationResult = this.validateCommand(cmdString, name);
+      if (!validationResult.isAllowed) {
+        throw new ToolError(
+          "COMMAND_VALIDATION_FAILED",
+          `Command validation failed: ${validationResult.reason}`,
+          false,
+        );
+      }
     }
 
     const key = name || this.defaultName;
@@ -2083,13 +2092,14 @@ export class SSHConnectionManager {
     return new Promise<string>((resolve, reject) => {
       let settled = false;
       let timeoutId: NodeJS.Timeout;
-      let capturedBytes = 0;
       const scanState: ShellScanState = {
         outputStartIndex: -1,
         tail: "",
         // Whatever the previous command left behind cannot hold this command's
         // markers, so the scan starts past it.
         tailStart: (this.shellBuffers.get(key) || "").length,
+        countedOutputEndIndex: -1,
+        capturedOutputBytes: 0,
       };
 
       const cleanup = () => {
@@ -2122,6 +2132,25 @@ export class SSHConnectionManager {
           commandId,
           scanState,
         );
+
+        if (
+          maxOutputBytes > 0 &&
+          scanState.capturedOutputBytes > maxOutputBytes
+        ) {
+          // The shell channel is shared by every command on this connection,
+          // so it cannot simply be closed like an exec channel: the command
+          // would keep writing into the buffer. Drop the connection instead.
+          this.invalidateConnection(key);
+          finish(
+            new ToolError(
+              "OUTPUT_LIMIT_EXCEEDED",
+              `[truncated] Output exceeded maxOutputBytes=${maxOutputBytes}; the command was aborted.`,
+              false,
+            ),
+          );
+          return;
+        }
+
         if (!matched) {
           return;
         }
@@ -2149,24 +2178,6 @@ export class SSHConnectionManager {
 
       const onData = (chunk: Buffer) => {
         scanState.tail += this.appendShellBuffer(key, chunk);
-        capturedBytes += chunk.length;
-
-        // The shell channel is shared by every command on this connection, so
-        // it cannot simply be closed like an exec channel: the command would
-        // keep writing into the buffer. Drop the connection instead, the same
-        // way the command timeout does.
-        if (maxOutputBytes > 0 && capturedBytes > maxOutputBytes) {
-          this.invalidateConnection(key);
-          finish(
-            new ToolError(
-              "OUTPUT_LIMIT_EXCEEDED",
-              `[truncated] Output exceeded maxOutputBytes=${maxOutputBytes}; the command was aborted.`,
-              false,
-            ),
-          );
-          return;
-        }
-
         resolveIfComplete();
       };
 
@@ -2286,6 +2297,7 @@ export class SSHConnectionManager {
 
       this.advanceShellScanTail(scanState, beginLineEndIndex + 1);
       scanState.outputStartIndex = scanState.tailStart;
+      scanState.countedOutputEndIndex = scanState.tailStart;
     }
 
     // Search the fixed prefix rather than the whole pattern: its length is
@@ -2294,9 +2306,24 @@ export class SSHConnectionManager {
     const endPrefix = `__MCP_END__${commandId}__RC__`;
     const endIndex = scanState.tail.indexOf(endPrefix);
     if (endIndex === -1) {
-      this.trimShellScanTail(scanState, endPrefix.length);
+      // Keep the marker overlap plus CRLF immediately before it. The command
+      // wrapper emits that newline as framing, so it must not count against the
+      // user's output limit.
+      this.trimShellScanTail(scanState, endPrefix.length + 2);
+      this.countShellOutputThrough(key, scanState, scanState.tailStart);
       return null;
     }
+
+    const absoluteEndIndex = scanState.tailStart + endIndex;
+    const buffer = this.shellBuffers.get(key) || "";
+    let outputEndIndex = absoluteEndIndex;
+    if (buffer[outputEndIndex - 1] === "\n") {
+      outputEndIndex -= 1;
+      if (buffer[outputEndIndex - 1] === "\r") {
+        outputEndIndex -= 1;
+      }
+    }
+    this.countShellOutputThrough(key, scanState, outputEndIndex);
 
     const exitCodeStart = endIndex + endPrefix.length;
     const matched = SHELL_EXIT_CODE_PATTERN.exec(
@@ -2311,8 +2338,6 @@ export class SSHConnectionManager {
       return null;
     }
 
-    const buffer = this.shellBuffers.get(key) || "";
-    const absoluteEndIndex = scanState.tailStart + endIndex;
     const consumedEndIndex =
       absoluteEndIndex + endPrefix.length + matched[0].length;
 
@@ -2321,6 +2346,26 @@ export class SSHConnectionManager {
       exitCode: Number.parseInt(matched[1], 10),
       remainder: buffer.slice(consumedEndIndex),
     };
+  }
+
+  private countShellOutputThrough(
+    key: string,
+    scanState: ShellScanState,
+    endIndex: number,
+  ): void {
+    if (
+      scanState.outputStartIndex === -1 ||
+      endIndex <= scanState.countedOutputEndIndex
+    ) {
+      return;
+    }
+
+    const buffer = this.shellBuffers.get(key) || "";
+    scanState.capturedOutputBytes += Buffer.byteLength(
+      buffer.slice(scanState.countedOutputEndIndex, endIndex),
+      "utf8",
+    );
+    scanState.countedOutputEndIndex = endIndex;
   }
 
   /** Appends the decoded chunk and returns just that text. */

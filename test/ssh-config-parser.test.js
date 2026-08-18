@@ -4,11 +4,7 @@ import { lookupSshConfig } from '../build/utils/ssh-config-parser.js';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { fileURLToPath } from 'url';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const fixturesDir = path.join(__dirname, 'fixtures');
+let fixturesDir;
 
 describe('SSH Config Parser', () => {
   let testConfigPath;
@@ -18,9 +14,7 @@ describe('SSH Config Parser', () => {
 
   before(() => {
     originalHome = process.env.HOME;
-    if (!fs.existsSync(fixturesDir)) {
-      fs.mkdirSync(fixturesDir, { recursive: true });
-    }
+    fixturesDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ssh-mcp-config-test-'));
 
     testConfigPath = path.join(fixturesDir, 'ssh-config-basic');
     testConfigWithIncludePath = path.join(fixturesDir, 'ssh-config-include');
@@ -75,13 +69,7 @@ describe('SSH Config Parser', () => {
 
   after(() => {
     process.env.HOME = originalHome;
-    try {
-      fs.unlinkSync(testConfigPath);
-      fs.unlinkSync(testConfigWithIncludePath);
-      fs.unlinkSync(includedConfigPath);
-    } catch (err) {
-      // 忽略清理错误
-    }
+    fs.rmSync(fixturesDir, { recursive: true, force: true });
   });
 
   describe('基本功能', () => {

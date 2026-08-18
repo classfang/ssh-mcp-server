@@ -4,13 +4,10 @@ import { CommandLineParser } from '../build/cli/command-line-parser.js';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { fileURLToPath } from 'url';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 
 describe('Command Line Parser', () => {
   let originalArgv;
+  let fixturesDir;
   let testConfigPath;
   let testSshConfigPath;
 
@@ -18,10 +15,7 @@ describe('Command Line Parser', () => {
     originalArgv = process.argv;
 
     // 创建测试配置文件
-    const fixturesDir = path.join(__dirname, 'fixtures');
-    if (!fs.existsSync(fixturesDir)) {
-      fs.mkdirSync(fixturesDir, { recursive: true });
-    }
+    fixturesDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ssh-mcp-cli-test-'));
 
     testConfigPath = path.join(fixturesDir, 'test-config.json');
     testSshConfigPath = path.join(fixturesDir, 'test-ssh-config');
@@ -54,15 +48,7 @@ Host testhost
 
   after(() => {
     process.argv = originalArgv;
-
-    // 清理测试文件
-    try {
-      fs.unlinkSync(testConfigPath);
-      fs.unlinkSync(testSshConfigPath);
-      fs.rmdirSync(path.join(__dirname, 'fixtures'));
-    } catch (err) {
-      // 忽略清理错误
-    }
+    fs.rmSync(fixturesDir, { recursive: true, force: true });
   });
 
   describe('配置文件解析', () => {
@@ -77,7 +63,7 @@ Host testhost
     });
 
     it('应该正确解析 JSON 配置文件（数组格式）', () => {
-      const arrayConfigPath = path.join(__dirname, 'fixtures', 'array-config.json');
+      const arrayConfigPath = path.join(fixturesDir, 'array-config.json');
       fs.writeFileSync(arrayConfigPath, JSON.stringify([
         {
           name: 'server1',
@@ -106,7 +92,7 @@ Host testhost
     });
 
     it('应该保留 JSON 配置中的 SSH algorithms', () => {
-      const algorithmsConfigPath = path.join(__dirname, 'fixtures', 'algorithms-config.json');
+      const algorithmsConfigPath = path.join(fixturesDir, 'algorithms-config.json');
       const algorithms = {
         serverHostKey: { append: ['ssh-rsa'] },
         hmac: ['hmac-sha1', 'hmac-md5']
@@ -132,7 +118,7 @@ Host testhost
     });
 
     it('应该保留并校验 JSON 配置中的 maxOutputBytes', () => {
-      const outputLimitConfigPath = path.join(__dirname, 'fixtures', 'output-limit-config.json');
+      const outputLimitConfigPath = path.join(fixturesDir, 'output-limit-config.json');
       fs.writeFileSync(outputLimitConfigPath, JSON.stringify({
         limited: {
           host: '192.168.1.100',
@@ -162,7 +148,7 @@ Host testhost
     });
 
     it('无效的 maxOutputBytes 应抛出错误', () => {
-      const invalidConfigPath = path.join(__dirname, 'fixtures', 'invalid-output-limit-config.json');
+      const invalidConfigPath = path.join(fixturesDir, 'invalid-output-limit-config.json');
       fs.writeFileSync(invalidConfigPath, JSON.stringify({
         invalid: {
           host: '192.168.1.100',
@@ -313,7 +299,7 @@ Host testhost
 
   describe('SSH Config 集成', () => {
     it('SSH config 缺少 Port 和 IdentityFile 时应使用默认端口和 SSH agent', () => {
-      const minimalSshConfigPath = path.join(__dirname, 'fixtures', 'minimal-ssh-config');
+      const minimalSshConfigPath = path.join(fixturesDir, 'minimal-ssh-config');
       const originalSshAuthSock = process.env.SSH_AUTH_SOCK;
       fs.writeFileSync(minimalSshConfigPath, `
 Host minimalhost
@@ -442,7 +428,7 @@ Host minimalhost
     });
 
     it('应该正确解析配置文件中的字符串 false pty', () => {
-      const ptyConfigPath = path.join(__dirname, 'fixtures', 'pty-config.json');
+      const ptyConfigPath = path.join(fixturesDir, 'pty-config.json');
       fs.writeFileSync(ptyConfigPath, JSON.stringify({
         dev: {
           host: '192.168.1.100',
@@ -508,7 +494,7 @@ Host minimalhost
     });
 
     it('应该正确解析配置文件中的 commandTemplate', () => {
-      const templateConfigPath = path.join(__dirname, 'fixtures', 'template-config.json');
+      const templateConfigPath = path.join(fixturesDir, 'template-config.json');
       fs.writeFileSync(templateConfigPath, JSON.stringify({
         dev: {
           host: '192.168.1.100',
@@ -528,7 +514,7 @@ Host minimalhost
     });
 
     it('应该支持 commandTemplate 的 <quotedCommand> 占位符', () => {
-      const templateConfigPath = path.join(__dirname, 'fixtures', 'quoted-template-config.json');
+      const templateConfigPath = path.join(fixturesDir, 'quoted-template-config.json');
       fs.writeFileSync(templateConfigPath, JSON.stringify({
         dev: {
           host: '192.168.1.100',
@@ -548,7 +534,7 @@ Host minimalhost
     });
 
     it('commandTemplate 缺少 <command> 占位符时应抛出错误', () => {
-      const badConfigPath = path.join(__dirname, 'fixtures', 'bad-template-config.json');
+      const badConfigPath = path.join(fixturesDir, 'bad-template-config.json');
       fs.writeFileSync(badConfigPath, JSON.stringify({
         dev: {
           host: '192.168.1.100',

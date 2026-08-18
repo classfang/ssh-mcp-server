@@ -121,4 +121,39 @@ describe('status collector', () => {
     assert.strictEqual(status.hostname, undefined);
     assert.ok(status.lastUpdated);
   });
+
+  it('先逐条授权探针，再只批量执行允许的命令', async () => {
+    const scripts = [];
+    const recordingRemote = fakeRemote({ hostname: 'allowed-host' });
+    const status = await collectSystemStatus(
+      (script) => {
+        scripts.push(script);
+        return recordingRemote(script);
+      },
+      'dev',
+      (command) => command === 'hostname',
+    );
+
+    assert.strictEqual(status.hostname, 'allowed-host');
+    assert.strictEqual(scripts.length, 1);
+    assert.match(scripts[0], /hostname/);
+    assert.ok(!scripts[0].includes('uname -s'));
+    assert.ok(!scripts[0].includes('cat /etc/os-release'));
+  });
+
+  it('没有获准探针时不执行远端脚本', async () => {
+    let calls = 0;
+    const status = await collectSystemStatus(
+      async () => {
+        calls += 1;
+        return '';
+      },
+      'dev',
+      () => false,
+    );
+
+    assert.strictEqual(calls, 0);
+    assert.strictEqual(status.reachable, true);
+    assert.strictEqual(status.hostname, undefined);
+  });
 });

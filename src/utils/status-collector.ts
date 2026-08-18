@@ -6,6 +6,11 @@ type StatusCommandRunner = (
   connectionName: string,
 ) => Promise<string>;
 
+type StatusCommandAuthorizer = (
+  command: string,
+  connectionName: string,
+) => boolean;
+
 /**
  * Join the probes into a single remote command, each result introduced by a
  * marker line.
@@ -51,7 +56,8 @@ function parseStatusScriptOutput(
  */
 export async function collectSystemStatus(
   runCommand: StatusCommandRunner,
-  connectionName: string
+  connectionName: string,
+  isCommandAllowed: StatusCommandAuthorizer = () => true,
 ): Promise<ServerStatus> {
   const status: ServerStatus = {
     reachable: true,
@@ -81,12 +87,26 @@ export async function collectSystemStatus(
       servicesInstalled: "systemctl list-unit-files --type=service 2>/dev/null | wc -l || ls /etc/init.d/ 2>/dev/null | wc -l || echo '0'",
     };
 
-    // Execute the probes and collect results
+    // Validate each probe before batching. Validating only the combined script
+    // would allow one whitelist match to authorize every command in it.
+    const allowedCommands = Object.fromEntries(
+      Object.entries(commands).filter(([, command]) =>
+        isCommandAllowed(command, connectionName),
+      ),
+    );
+
+    // Execute the allowed probes and collect results.
     const marker = `__MCP_FIELD_${Math.random().toString(16).slice(2, 10)}_`;
     let values = new Map<string, string>();
     try {
+      if (Object.keys(allowedCommands).length === 0) {
+        return status;
+      }
       values = parseStatusScriptOutput(
-        await runCommand(buildStatusScript(commands, marker), connectionName),
+        await runCommand(
+          buildStatusScript(allowedCommands, marker),
+          connectionName,
+        ),
         marker,
       );
     } catch {

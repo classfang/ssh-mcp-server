@@ -4,11 +4,8 @@ import { CommandLineParser } from '../build/cli/command-line-parser.js';
 import { SSHConnectionManager } from '../build/services/ssh-connection-manager.js';
 import * as fs from 'fs';
 import * as path from 'path';
-import { fileURLToPath } from 'url';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const fixturesDir = path.join(__dirname, 'fixtures');
+import * as os from 'os';
+let fixturesDir;
 
 describe('集成测试', () => {
   let originalArgv;
@@ -16,13 +13,12 @@ describe('集成测试', () => {
   before(() => {
     originalArgv = process.argv;
 
-    if (!fs.existsSync(fixturesDir)) {
-      fs.mkdirSync(fixturesDir, { recursive: true });
-    }
+    fixturesDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ssh-mcp-integration-test-'));
   });
 
   after(() => {
     process.argv = originalArgv;
+    fs.rmSync(fixturesDir, { recursive: true, force: true });
   });
 
   describe('端到端场景', () => {
