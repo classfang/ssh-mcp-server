@@ -510,6 +510,29 @@ describe('SSH Connection Manager', () => {
       );
     });
 
+    it('远端路径被拒时应指出解析结果和允许的根路径', () => {
+      manager.setConfig({
+        dev: createPasswordConfig({
+          name: 'dev',
+          allowedRemotePaths: ['/home/ops/inbox', '/var/log'],
+        }),
+      });
+
+      assert.throws(
+        () => manager.validateRemotePath('/home/ops/inbox/../../../etc/passwd', 'dev'),
+        (error) => {
+          assert.strictEqual(error.code, 'REMOTE_PATH_NOT_ALLOWED');
+          // The normalized path is what the check ran against, not the input.
+          assert.match(error.message, /Resolved to: \/etc\/passwd\./);
+          assert.match(
+            error.message,
+            /Allowed remote paths for this connection: \/home\/ops\/inbox, \/var\/log\./,
+          );
+          return true;
+        },
+      );
+    });
+
     it('validateRemotePath 归一化 .. 并据此做边界判断', () => {
       manager.setConfig({
         dev: createPasswordConfig({

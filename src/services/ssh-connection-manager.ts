@@ -112,12 +112,15 @@ function shellQuote(value: string): string {
 }
 
 /**
- * The caller cannot see the process working directory, so a rejection that only
- * says "must be within the working directory" leaves it nothing to correct
- * against. Name the roots instead.
+ * The caller cannot see the process working directory or the server's path
+ * configuration, so a rejection that only says "must be within an allowed path"
+ * leaves it nothing to correct against. Name the roots instead.
  */
-function describeAllowedRoots(allowedRoots: string[]): string {
-  return `Allowed local paths for this connection: ${allowedRoots.join(", ")}.`;
+function describeAllowedRoots(
+  kind: "local" | "remote",
+  allowedRoots: string[],
+): string {
+  return `Allowed ${kind} paths for this connection: ${allowedRoots.join(", ")}.`;
 }
 
 function isPathWithinRoot(candidate: string, root: string): boolean {
@@ -488,6 +491,7 @@ export class SSHConnectionManager {
       throw new ToolError(
         "LOCAL_PATH_NOT_ALLOWED",
         `Local path parent directory must exist and be within an allowed local path. Resolved to: ${resolvedPath}. ${describeAllowedRoots(
+          "local",
           allowedRoots,
         )}`,
         false,
@@ -502,6 +506,7 @@ export class SSHConnectionManager {
       throw new ToolError(
         "LOCAL_PATH_NOT_ALLOWED",
         `Path traversal detected. Local path resolved to: ${pathToCheck}. ${describeAllowedRoots(
+          "local",
           allowedRoots,
         )}`,
         false,
@@ -570,7 +575,10 @@ export class SSHConnectionManager {
     if (!isAllowed) {
       throw new ToolError(
         "REMOTE_PATH_NOT_ALLOWED",
-        "Remote path is not within the configured allowedRemotePaths.",
+        `Remote path is not within the configured allowedRemotePaths. Resolved to: ${resolvedPath}. ${describeAllowedRoots(
+          "remote",
+          allowedRoots,
+        )}`,
         false,
       );
     }
