@@ -269,15 +269,25 @@ describe('SSH Connection Manager', () => {
     });
 
     it('应允许配置的本地路径用于传输', () => {
-      manager.setConfig({
-        dev: createPasswordConfig({
-          name: 'dev',
-          allowedLocalPaths: ['/tmp'],
-        }),
-      });
+      const allowedRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ssh-mcp-allowed-'));
 
-      assert.throws(() => manager.validateLocalPath('/etc/passwd'), ToolError);
-      assert.strictEqual(manager.validateLocalPath('/tmp/test.txt'), '/tmp/test.txt');
+      try {
+        manager.setConfig({
+          dev: createPasswordConfig({
+            name: 'dev',
+            allowedLocalPaths: [allowedRoot],
+          }),
+        });
+
+        const insidePath = path.join(allowedRoot, 'test.txt');
+        assert.strictEqual(manager.validateLocalPath(insidePath, 'dev'), insidePath);
+        assert.throws(
+          () => manager.validateLocalPath(path.resolve(path.sep, 'etc', 'passwd'), 'dev'),
+          ToolError,
+        );
+      } finally {
+        fs.rmSync(allowedRoot, { recursive: true, force: true });
+      }
     });
 
     it('本地允许路径应按连接隔离', () => {
@@ -308,7 +318,7 @@ describe('SSH Connection Manager', () => {
       }
     });
 
-    it('本地路径校验应拒绝通过符号链接逃出允许目录', () => {
+    it('本地路径校验应拒绝通过符号链接逃出允许目录', (t) => {
       const allowedRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ssh-mcp-allowed-'));
       const outsideRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ssh-mcp-outside-'));
       const outsideFile = path.join(outsideRoot, 'secret.txt');
@@ -316,7 +326,17 @@ describe('SSH Connection Manager', () => {
 
       try {
         fs.writeFileSync(outsideFile, 'secret');
-        fs.symlinkSync(outsideRoot, symlinkPath, 'dir');
+        try {
+          fs.symlinkSync(outsideRoot, symlinkPath, 'dir');
+        } catch (error) {
+          // Windows only allows this for administrators or with developer
+          // mode enabled; the assertion below is meaningless without a symlink.
+          if (error.code !== 'EPERM' && error.code !== 'EACCES') {
+            throw error;
+          }
+          t.skip('creating symlinks requires elevated privileges here');
+          return;
+        }
 
         manager.setConfig({
           dev: createPasswordConfig({
