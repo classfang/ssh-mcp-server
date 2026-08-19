@@ -534,7 +534,7 @@ npx @fangjunjie/ssh-mcp-server \
 
 `execute-command` 工具支持超时选项，防止命令无限期挂起：
 
-- **timeout**: 单次调用的命令执行超时时间（毫秒，可选，默认为30000ms）
+- **timeout**: 单次调用的命令执行超时时间（毫秒，可选）；传入时会覆盖连接配置，未传入时使用对应连接配置或其 30000ms 默认值
 - 在 JSON 配置文件里为单个连接设置 `commandTimeoutMs`，可以改掉这个默认值，避免每次调用都手动传 `timeout`（`exec` 模式）
 - `shell` 模式对应的配置项是 `shellCommandTimeoutMs`
 - 调用参数里的 `timeout` 始终优先于上面两个配置项

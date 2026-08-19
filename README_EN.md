@@ -528,7 +528,7 @@ Example (execute command with timeout options):
 
 The `execute-command` tool supports timeout options to prevent commands from hanging indefinitely:
 
-- **timeout**: Per-call command execution timeout in milliseconds (optional, default is 30000ms)
+- **timeout**: Per-call command execution timeout in milliseconds (optional); when provided, it overrides the connection setting, otherwise the connection setting or its 30000ms default is used
 - Set `commandTimeoutMs` per connection in the JSON config file to change that default, so callers do not have to pass `timeout` on every call (`exec` mode)
 - The `shell` mode equivalent is `shellCommandTimeoutMs`
 - A `timeout` passed with the call always takes precedence over both settings

@@ -25,7 +25,7 @@ export function registerExecuteCommandTool(server: McpServer): void {
           .number()
           .optional()
           .describe(
-            "Command execution timeout in milliseconds (optional, default is 30000ms)",
+            "Command execution timeout in milliseconds (optional; overrides the connection's commandTimeoutMs or shellCommandTimeoutMs, which defaults to 30000ms)",
           ),
       },
     },
