@@ -355,6 +355,10 @@ export class CommandLineParser {
         config.shellCommandTimeoutMs,
         "shellCommandTimeoutMs",
       ),
+      commandTimeoutMs: this.parseTimeout(
+        config.commandTimeoutMs,
+        "commandTimeoutMs",
+      ),
       connectionTimeoutMs: this.parseTimeout(
         config.connectionTimeoutMs,
         "connectionTimeoutMs",

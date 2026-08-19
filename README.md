@@ -385,6 +385,7 @@ JSON 配置文件中还可以通过 `shellCommandTimeoutMs` 覆盖 shell 模式�
     "username": "alice",
     "password": "{abc=P100s0}",
     "socksProxy": "socks://127.0.0.1:10808",
+    "commandTimeoutMs": 120000,
     "maxOutputBytes": 10485760
   },
   {
@@ -430,6 +431,7 @@ JSON 配置文件中还可以通过 `shellCommandTimeoutMs` 覆盖 shell 模式�
     "username": "alice",
     "password": "{abc=P100s0}",
     "socksProxy": "socks://127.0.0.1:10808",
+    "commandTimeoutMs": 120000,
     "maxOutputBytes": 10485760
   },
   "bastion": {
@@ -532,8 +534,10 @@ npx @fangjunjie/ssh-mcp-server \
 
 `execute-command` 工具支持超时选项，防止命令无限期挂起：
 
-- **timeout**: 命令执行超时时间（毫秒，可选，默认为30000ms）
-- 在 `shell` 模式下，还可以在 JSON 配置文件里为单个连接设置 `shellCommandTimeoutMs`
+- **timeout**: 单次调用的命令执行超时时间（毫秒，可选，默认为30000ms）
+- 在 JSON 配置文件里为单个连接设置 `commandTimeoutMs`，可以改掉这个默认值，避免每次调用都手动传 `timeout`（`exec` 模式）
+- `shell` 模式对应的配置项是 `shellCommandTimeoutMs`
+- 调用参数里的 `timeout` 始终优先于上面两个配置项
 - 连接默认启用 SSH keepalive（`keepaliveIntervalMs`: 10000，`keepaliveCountMax`: 3），并使用 `connectionTimeoutMs` 限制连接建立时间
 - SFTP 打开和传输操作使用 `sftpTimeoutMs` 控制超时（默认 300000ms）
 - 错误响应现在包含稳定的 `code`、`message`、`retriable` 字段，便于上层 Agent 处理

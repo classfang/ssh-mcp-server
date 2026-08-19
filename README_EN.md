@@ -380,6 +380,7 @@ Create a JSON configuration file (e.g., `ssh-config.json`):
     "username": "alice",
     "password": "{abc=P100s0}",
     "socksProxy": "socks://127.0.0.1:10808",
+    "commandTimeoutMs": 120000,
     "maxOutputBytes": 10485760
   },
   {
@@ -424,6 +425,7 @@ Create a JSON configuration file (e.g., `ssh-config.json`):
     "username": "alice",
     "password": "{abc=P100s0}",
     "socksProxy": "socks://127.0.0.1:10808",
+    "commandTimeoutMs": 120000,
     "maxOutputBytes": 10485760
   },
   "bastion": {
@@ -526,8 +528,10 @@ Example (execute command with timeout options):
 
 The `execute-command` tool supports timeout options to prevent commands from hanging indefinitely:
 
-- **timeout**: Command execution timeout in milliseconds (optional, default is 30000ms)
-- In `shell` mode, you can also set `shellCommandTimeoutMs` per connection in the JSON config file
+- **timeout**: Per-call command execution timeout in milliseconds (optional, default is 30000ms)
+- Set `commandTimeoutMs` per connection in the JSON config file to change that default, so callers do not have to pass `timeout` on every call (`exec` mode)
+- The `shell` mode equivalent is `shellCommandTimeoutMs`
+- A `timeout` passed with the call always takes precedence over both settings
 - Connections use SSH keepalives by default (`keepaliveIntervalMs`: 10000, `keepaliveCountMax`: 3) and respect `connectionTimeoutMs` for connection setup
 - SFTP open and transfer operations respect `sftpTimeoutMs` (default 300000ms)
 - Error responses include stable `code`, `message`, and `retriable` fields for easier agent-side handling
