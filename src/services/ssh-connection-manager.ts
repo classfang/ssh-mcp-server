@@ -1935,7 +1935,7 @@ export class SSHConnectionManager {
         readyMarker,
         this.getShellReadyTimeoutMs(config),
       );
-      this.configureShellSession(stream);
+      await this.configureShellSession(key, stream, config);
       this.shellReady.set(key, true);
       this.attachShellLifecycleListeners(key, stream);
     } catch (error) {
@@ -1960,7 +1960,20 @@ export class SSHConnectionManager {
       let settled = false;
       let timeoutId: NodeJS.Timeout;
       let probeIntervalId: NodeJS.Timeout;
-      const payload = `printf '${readyMarker}\\n'\n`;
+      // Escape the marker in the probe payload so the command text does not
+      // contain the literal marker string.  When the PTY echoes the probe
+      // command back (echo is still on during the first probe), the echo no
+      // longer matches readyMarker, so resolveIfReady only fires once the
+      // printf actually executes and emits the literal marker.  Without this,
+      // waitForShellReady resolves on the echoed command line, before the
+      // probed command has run — which is fatal when the probed command is
+      // `stty -echo` in configureShellSession: the next real command would be
+      // sent before echo is disabled and would itself be echoed, leaving
+      // extractShellCommandResult matching markers inside the echoed script.
+      const escapedMarker = readyMarker
+        .replace(/\\/g, "\\\\")
+        .replace(/_/g, "\\137");
+      const payload = `printf '${escapedMarker}\\n'\n`;
 
       const cleanup = () => {
         if (timeoutId) {
@@ -2061,9 +2074,30 @@ export class SSHConnectionManager {
     );
   }
 
-  private configureShellSession(stream: ClientChannel): void {
+  private async configureShellSession(
+    key: string,
+    stream: ClientChannel,
+    config: SSHConfig,
+  ): Promise<void> {
+    // Send `export PS1=''` and `stty -echo` first.  The verification probe
+    // (printf, emitted by waitForShellReady below with an escaped marker)
+    // follows them in the same shell input stream, so by the time the
+    // probe's literal marker is emitted, stty has executed and terminal echo
+    // is off.  We must NOT write our own `printf '${marker}'` here: that
+    // payload contains the literal marker, so when echo is still on it would
+    // be echoed back and waitForShellReady would resolve prematurely, before
+    // stty runs — leaving the next real command echoed.
     stream.write("export PS1=''\n");
     stream.write("stty -echo >/dev/null 2>&1 || true\n");
+
+    const verifyId = this.generateMarkerId("stty");
+    const verifyMarker = `__MCP_CONFIGURE__${verifyId}__`;
+    await this.waitForShellReady(
+      key,
+      stream,
+      verifyMarker,
+      this.getShellReadyTimeoutMs(config),
+    );
   }
 
   private runShellCommand(
