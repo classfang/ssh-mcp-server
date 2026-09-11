@@ -10,7 +10,7 @@ Options:
   --config-file <path>             Load SSH server configs from a JSON file
   --ssh-config-file <path>         Read host aliases from SSH config (default: ~/.ssh/config)
   --ssh <config>                   Add an SSH config as JSON or legacy key=value pairs (repeatable)
-  -h, --host <host>                SSH host or SSH config alias for single-host mode
+  -h, --host <hosts>               SSH host(s), comma-separated; aliases resolve from SSH config
   -p, --port <port>                SSH port for single-host mode
   -u, --username <name>            SSH username for single-host mode
   -w, --password <password>        SSH password for single-host mode

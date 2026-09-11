@@ -430,6 +430,180 @@ Host minimalhost
     });
   });
 
+  describe('--host 多值多连接模式', () => {
+    const multiSshConfigPath = () => path.join(fixturesDir, 'multi-hosts-ssh-config');
+    const writeMultiConfig = () => {
+      fs.writeFileSync(multiSshConfigPath(), `
+Host hosta
+    HostName 172.16.0.10
+    Port 2222
+    User usera
+    IdentityFile ~/.ssh/key_a
+
+Host hostb
+    HostName 172.16.0.11
+    User userb
+`);
+      return multiSshConfigPath();
+    };
+
+    it('多个别名应各自独立展开为多连接，连接名为别名本身', () => {
+      const configPath = writeMultiConfig();
+      const originalSshAuthSock = process.env.SSH_AUTH_SOCK;
+      process.env.SSH_AUTH_SOCK = '/tmp/test-ssh-agent.sock';
+
+      try {
+        process.argv = [
+          'node', 'test',
+          '--host', 'hosta,hostb',
+          '--ssh-config-file', configPath,
+          '--pty', 'false',
+        ];
+        const result = CommandLineParser.parseArgs();
+
+        assert.strictEqual(Object.keys(result.configs).length, 2);
+
+        assert.strictEqual(result.configs.hosta.name, 'hosta');
+        assert.strictEqual(result.configs.hosta.host, '172.16.0.10');
+        assert.strictEqual(result.configs.hosta.port, 2222);
+        assert.strictEqual(result.configs.hosta.username, 'usera');
+        assert.ok(result.configs.hosta.privateKey.endsWith(path.join('.ssh', 'key_a')));
+        assert.strictEqual(result.configs.hosta.pty, false);
+
+        // hostb 无 IdentityFile：默认端口 22，认证回退顺序为默认身份
+        // 文件 > agent（与单主机模式一致）；测试机可能存在真实默认密钥，
+        // 两种回退结果都合法
+        assert.strictEqual(result.configs.hostb.host, '172.16.0.11');
+        assert.strictEqual(result.configs.hostb.port, 22);
+        assert.strictEqual(result.configs.hostb.username, 'userb');
+        const hostbAuth =
+          result.configs.hostb.privateKey || result.configs.hostb.agent;
+        assert.ok(
+          hostbAuth,
+          'hostb 应回退到默认身份文件或 SSH agent 之一',
+        );
+        assert.strictEqual(result.configs.hostb.pty, false);
+      } finally {
+        if (originalSshAuthSock === undefined) {
+          delete process.env.SSH_AUTH_SOCK;
+        } else {
+          process.env.SSH_AUTH_SOCK = originalSshAuthSock;
+        }
+        fs.rmSync(configPath, { force: true });
+      }
+    });
+
+    it('提供 CLI 认证参数时全部主机共享认证，IdentityFile 不参与', () => {
+      const configPath = writeMultiConfig();
+
+      try {
+        process.argv = [
+          'node', 'test',
+          '--host', 'hosta,10.99.0.1',
+          '--username', 'shareduser',
+          '--password', 'sharedpass',
+          '--ssh-config-file', configPath,
+        ];
+        const result = CommandLineParser.parseArgs();
+
+        assert.strictEqual(Object.keys(result.configs).length, 2);
+
+        // hosta 命中 config：地址仍展开，但认证用 CLI 共享值
+        assert.strictEqual(result.configs.hosta.host, '172.16.0.10');
+        assert.strictEqual(result.configs.hosta.username, 'shareduser');
+        assert.strictEqual(result.configs.hosta.password, 'sharedpass');
+        assert.strictEqual(result.configs.hosta.privateKey, undefined);
+
+        // 裸 IP 原样作为地址，同样共享 CLI 认证
+        assert.strictEqual(result.configs['10.99.0.1'].host, '10.99.0.1');
+        assert.strictEqual(result.configs['10.99.0.1'].username, 'shareduser');
+        assert.strictEqual(result.configs['10.99.0.1'].password, 'sharedpass');
+      } finally {
+        fs.rmSync(configPath, { force: true });
+      }
+    });
+
+    it('CLI port/username 应逐字段覆盖全部主机', () => {
+      const configPath = writeMultiConfig();
+
+      try {
+        process.argv = [
+          'node', 'test',
+          '--host', 'hosta,hostb',
+          '--port', '3333',
+          '--username', 'overrideuser',
+          '--password', 'pass',
+          '--ssh-config-file', configPath,
+        ];
+        const result = CommandLineParser.parseArgs();
+
+        assert.strictEqual(result.configs.hosta.port, 3333);
+        assert.strictEqual(result.configs.hosta.username, 'overrideuser');
+        assert.strictEqual(result.configs.hostb.port, 3333);
+        assert.strictEqual(result.configs.hostb.username, 'overrideuser');
+        // HostName 仍来自 config
+        assert.strictEqual(result.configs.hosta.host, '172.16.0.10');
+      } finally {
+        fs.rmSync(configPath, { force: true });
+      }
+    });
+
+    it('主机缺用户名或认证来源时应报错并列出该主机', () => {
+      const configPath = writeMultiConfig();
+      const originalSshAuthSock = process.env.SSH_AUTH_SOCK;
+      delete process.env.SSH_AUTH_SOCK;
+
+      try {
+        process.argv = [
+          'node', 'test',
+          '--host', 'hosta,ghosthost',
+          '--ssh-config-file', configPath,
+        ];
+        // ghosthost 未命中 config 且无 CLI 认证 → 报错列出
+        // （hosta 命中且有 IdentityFile 不受影响）
+        assert.throws(
+          () => CommandLineParser.parseArgs(),
+          /Missing required parameters for host\(s\): ghosthost/,
+        );
+      } finally {
+        if (originalSshAuthSock === undefined) {
+          delete process.env.SSH_AUTH_SOCK;
+        } else {
+          process.env.SSH_AUTH_SOCK = originalSshAuthSock;
+        }
+        fs.rmSync(configPath, { force: true });
+      }
+    });
+
+    it('多值应去重且忽略空项', () => {
+      const configPath = writeMultiConfig();
+
+      try {
+        process.argv = [
+          'node', 'test',
+          '--host', 'hosta,hosta, ,hosta',
+          '--username', 'u',
+          '--password', 'p',
+          '--ssh-config-file', configPath,
+        ];
+        const result = CommandLineParser.parseArgs();
+
+        assert.deepStrictEqual(Object.keys(result.configs), ['hosta']);
+      } finally {
+        fs.rmSync(configPath, { force: true });
+      }
+    });
+
+    it('单值含逗号以外的行为保持不变：连接名仍为 default', () => {
+      process.argv = ['node', 'test', '--host', '1.2.3.4', '--port', '22', '--username', 'user', '--password', 'pass'];
+      const result = CommandLineParser.parseArgs();
+
+      assert.strictEqual(Object.keys(result.configs).length, 1);
+      assert.ok(result.configs.default);
+      assert.strictEqual(result.configs.default.host, '1.2.3.4');
+    });
+  });
+
   describe('命令白名单和黑名单', () => {
     it('应该正确解析命令白名单', () => {
       process.argv = ['node', 'test', '--host', '1.2.3.4', '--port', '22', '--username', 'user', '--password', 'pass', '--whitelist', 'ls,cat,grep'];

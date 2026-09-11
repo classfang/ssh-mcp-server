@@ -177,6 +177,8 @@ You can also specify a custom SSH config file path:
 
 **Note**: Command-line parameters take precedence over SSH config values. For example, if you specify `--port 2222`, it will override the port from SSH config.
 
+To connect to multiple hosts that are already defined in your SSH config in one shot, see Method 4 under "10. Managing Multiple SSH Connections" below.
+
 ### 5. 🌐 Connecting Through a Proxy
 
 When the target host is only reachable through a proxy, use `--proxy` with a SOCKS5, HTTP, or HTTPS proxy.
@@ -364,7 +366,7 @@ When the SSH server requires multi-factor authentication (password + private key
 
 ### 10. 🧩 Managing Multiple SSH Connections
 
-When you need to expose more than one SSH target through the same MCP server, register them under unique connection names and select the target at call time via `connectionName`. There are three ways to configure them:
+When you need to expose more than one SSH target through the same MCP server, register them under unique connection names and select the target at call time via `connectionName`. There are four ways to configure them:
 
 #### 📄 Method 1: Using Config File (Recommended)
 
@@ -497,6 +499,33 @@ npx @fangjunjie/ssh-mcp-server \
 
 > **⚠️ Note**: The legacy format may have issues with passwords containing special characters like `=`, `,`, `{`, `}`. Use Method 1 or Method 2 for passwords with special characters.
 
+#### 🔑 Method 4: Comma-Separated Multi-Value --host (Reusing ~/.ssh/config)
+
+`--host` accepts a comma-separated list of hosts, which switches the server into multi-connection mode: each host becomes an independent connection named after the host value itself, while a single `--host` value keeps the original single-host behavior (connection name remains `default`). Every host independently follows the same merge rules as single-host mode — an alias that matches SSH config expands to its HostName/Port/User/IdentityFile, and command-line parameters override field by field. This is ideal when all your hosts are already defined in `~/.ssh/config`, with no JSON needed:
+
+```json
+{
+  "mcpServers": {
+    "ssh-mcp-server": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@fangjunjie/ssh-mcp-server",
+        "--host", "myserver,anotherserver",
+        "--pty", "false"
+      ]
+    }
+  }
+}
+```
+
+Authentication resolution follows one of two modes depending on whether CLI authentication parameters (`--password`/`--privateKey`/`--agent`) are provided:
+
+- **Not provided**: each alias resolves its own authentication from SSH config (the alias's IdentityFile first, then `~/.ssh` default identity file fallback, then the SSH agent)
+- **Provided**: all hosts share the CLI authentication and SSH config IdentityFile entries are ignored (aliases and bare IPs behave identically, differing only in address expansion); `--passphrase` acts as the key decryption passphrase and is shareable
+
+All other CLI policy parameters (`--pty`, `--whitelist`, timeouts, etc.) serve as process-level defaults shared by every host, with no per-server repetition needed. If any host lacks a username or authentication source, startup fails immediately listing that host. When different hosts need different policies (port, whitelist, timeout, etc.), use Method 1 instead.
+
 In MCP tool calls, specify the connection name via the `connectionName` parameter. If omitted, the default connection is used.
 
 Example (execute command on 'prod' connection):
@@ -550,7 +579,7 @@ The combined captured `stdout` and `stderr` for each command is limited to prote
 
 ### 🗂️ List All SSH Servers
 
-You can use the MCP tool `list-servers` to get all available SSH server configurations:
+You can use the MCP tool `list-servers` to get all available SSH serve (comma-separated values enable multi-connection mode)r configurations:
 
 Example call:
 

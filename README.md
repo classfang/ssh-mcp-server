@@ -181,6 +181,8 @@ Host myserver
 
 **注意**：命令行参数优先级高于 SSH 配置值。例如，如果你指定了 `--port 2222`，它会覆盖 SSH 配置中的端口。
 
+需要一次连接多台已在 SSH config 中配好的主机时，参见下文「10. 多 SSH 连接配置」的方式四。
+
 ### 5. 🌐 通过代理连接
 
 当目标主机只能通过代理访问时，可使用 `--proxy` 配置 SOCKS5、HTTP 或 HTTPS 代理。
@@ -368,7 +370,7 @@ JSON 配置文件中还可以通过 `shellCommandTimeoutMs` 覆盖 shell 模式�
 
 ### 10. 🧩 多 SSH 连接配置
 
-需要在同一个 MCP server 里同时管理多个 SSH 目标时，给每个连接命名，调用时通过 `connectionName` 选择。共有三种配置方式：
+需要在同一个 MCP server 里同时管理多个 SSH 目标时，给每个连接命名，调用时通过 `connectionName` 选择。共有四种配置方式：
 
 #### 📄 方式一：使用配置文件（推荐）
 
@@ -503,6 +505,33 @@ npx @fangjunjie/ssh-mcp-server \
 
 > **⚠️ 注意**：旧格式在处理包含特殊字符（如 `=`、`,`、`{`、`}`）的密码时可能会有问题。如果密码包含特殊字符，请使用方式一或方式二。
 
+#### 🔑 方式四：`--host` 逗号分隔多值（复用 `~/.ssh/config`）
+
+`--host` 支持逗号分隔多个主机，进入多连接模式：每个主机作为独立连接，连接名为主机值本身；单值 `--host` 行为不变（连接名仍为 `default`）。每个主机独立套用与单主机相同的合并规则——命中 SSH config 别名则展开 HostName/Port/User/IdentityFile，命令行参数逐字段覆盖。适合多台主机都已在 `~/.ssh/config` 中配好的场景，无需编写任何 JSON：
+
+```json
+{
+  "mcpServers": {
+    "ssh-mcp-server": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@fangjunjie/ssh-mcp-server",
+        "--host", "myserver,anotherserver",
+        "--pty", "false"
+      ]
+    }
+  }
+}
+```
+
+认证解析按是否提供 CLI 认证参数（`--password`/`--privateKey`/`--agent`）分两种模式：
+
+- **未提供**：每个别名独立从 SSH config 解析认证（该别名的 IdentityFile 优先，其次 `~/.ssh` 默认身份文件回退，最后 SSH agent）
+- **提供**：全部主机共享该 CLI 认证，SSH config 的 IdentityFile 不参与（别名与裸 IP 行为一致，仅地址展开不同）；`--passphrase` 作为密钥解密口令可共享
+
+其余 CLI 策略参数（`--pty`、`--whitelist`、超时等）作为进程级默认值共享给全部主机，无需逐服务器重复。任一主机缺用户名或认证来源时，启动即报错并列出该主机。需要为不同主机配置不同的策略（端口、白名单、超时等）时，请使用方式一。
+
 在MCP工具调用时，通过 `connectionName` 参数指定目标连接名称，未指定时使用默认连接。
 
 示例（在prod连接上执行命令）：
@@ -583,7 +612,7 @@ npx @fangjunjie/ssh-mcp-server \
   --config-file       JSON 配置文件路径（推荐用于多服务器配置）
   --ssh-config-file   SSH 配置文件路径（默认: ~/.ssh/config）
   --ssh               SSH 连接配置（可以是 JSON 字符串或旧格式）
-  -h, --host          SSH 服务器主机地址或 SSH 配置中的别名
+  -h, --host          SSH 服务器主机地址或 SSH 配置中的别名（逗号分隔多值进入多连接模式）
   -p, --port          SSH 服务器端口
   -u, --username      SSH 用户名
   -w, --password      SSH 密码
