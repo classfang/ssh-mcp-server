@@ -46,6 +46,7 @@ NPM: [https://www.npmjs.com/package/@fangjunjie/ssh-mcp-server](https://www.npmj
 | upload | File Upload Tool | Upload local files to specified locations on remote servers |
 | download | File Download Tool | Download files from remote servers to local specified locations |
 | list-servers | List Servers Tool | List all available SSH server configurations |
+| job-start / job-status / job-kill / job-list | Background Job Tools | Start tasks that outlive the command timeout, poll their output and exit code, kill them |
 
 ## 📚 Usage
 
@@ -547,6 +548,18 @@ The combined captured `stdout` and `stderr` for each command is limited to prote
 - When output exceeds the limit, the remote command is aborted and the tool returns an `OUTPUT_LIMIT_EXCEEDED` error with the captured, truncated output instead of reporting success
 - With `pty: false`, warnings and progress written to `stderr` by successful commands are preserved in a `[stderr]` section
 - The limit applies to both `exec` and `shell` mode. `exec` mode closes just that command's channel, whereas the `shell` channel is shared by every command on the connection and the remote keeps writing after an abort, so the connection is dropped instead — the same way a shell mode command timeout behaves
+
+### 🧵 Background Jobs
+
+`execute-command` gives up on a command once it times out. Long tasks such as builds and deploys should use background jobs instead:
+
+- `job-start` starts the command in the background on the server and returns a `job_id` right away. The command goes through `commandWhitelist` / `commandBlacklist` exactly like `execute-command`
+- `job-status` returns the state (`running` / `exited` / `killed` / `lost`), exit code, elapsed time and output. Without `offset` it returns the end of the output (`tailBytes`, default 8192); with `offset` it continues from that byte and names the `next offset`, so repeated polling only reads what is new
+- `job-kill` sends `SIGTERM`, then `SIGKILL` after 5 seconds, and terminates child processes recursively
+- `job-list` lists recent jobs with their state
+- Job state (command, output, pid, exit code) lives on the server under `~/.ssh-mcp-jobs/<id>/`, so it survives an MCP restart or a dropped SSH connection. Job directories older than 7 days are pruned on the next `job-start`
+- `job-kill` only signals a process whose command line carries the job id, so a reused pid can never make it kill an unrelated process; such a job is reported as `lost`
+- The server needs a POSIX `sh`; with `setsid` available a job gets its own process group. Works in `shell` (bastion) mode too
 
 ### 🗂️ List All SSH Servers
 

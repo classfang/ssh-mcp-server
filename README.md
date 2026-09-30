@@ -50,6 +50,7 @@ NPM: [https://www.npmjs.com/package/@fangjunjie/ssh-mcp-server](https://www.npmj
 | upload | 文件上传工具 | 将本地文件上传到远程服务器指定位置 |
 | download | 文件下载工具 | 从远程服务器下载文件到本地指定位置 |
 | list-servers | 服务器列表工具 | 列出所有可用SSH服务器配置 |
+| job-start / job-status / job-kill / job-list | 后台任务工具 | 启动超过命令超时限制的长任务，轮询输出与退出码，终止任务 |
 
 ## 📚 使用方法
 
@@ -553,6 +554,18 @@ npx @fangjunjie/ssh-mcp-server \
 - 输出超过限制时，远端命令会被中止，工具返回 `OUTPUT_LIMIT_EXCEEDED` 错误和已经捕获的截断输出，不会把中止的命令误报为成功
 - 当 `pty` 为 `false` 时，成功命令写入 `stderr` 的警告或进度信息会保留在 `[stderr]` 区段中
 - `exec` 与 `shell` 两种模式都会应用该限制。区别在于 `exec` 模式只关闭该命令的通道，而 `shell` 模式的通道由该连接上的所有命令共用、远端在中止后仍会继续写入，因此会断开连接（与 shell 模式命令超时的处理一致）
+
+### 🧵 后台任务
+
+`execute-command` 会在超时后放弃命令，构建、部署这类长任务应改用后台任务：
+
+- `job-start`：在远端后台启动命令并立即返回 `job_id`。命令与 `execute-command` 一样经过 `commandWhitelist` / `commandBlacklist` 校验
+- `job-status`：返回状态（`running` / `exited` / `killed` / `lost`）、退出码、已运行时间和输出。不带 `offset` 时返回输出末尾（`tailBytes`，默认 8192）；带 `offset` 时从该字节继续读，返回里给出 `next offset`，重复轮询只会读到新增内容
+- `job-kill`：先 `SIGTERM`，5 秒后仍未退出则 `SIGKILL`，并递归终止子进程
+- `job-list`：列出最近的任务及状态
+- 任务的状态（命令、输出、pid、退出码）保存在远端 `~/.ssh-mcp-jobs/<id>/`，因此 MCP 重启或 SSH 连接断开都不会丢失；已结束超过 7 天的任务目录会在下次 `job-start` 时清理
+- `job-kill` 只会向命令行中带有该任务 id 的进程发信号，避免 pid 被复用后误杀无关进程；此时任务显示为 `lost`
+- 远端需要 POSIX `sh`，有 `setsid` 时任务独立成进程组；`shell`（堡垒机）模式同样可用
 
 ### 🗂️ 列出所有SSH服务器
 

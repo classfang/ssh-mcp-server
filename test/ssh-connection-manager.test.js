@@ -2160,4 +2160,103 @@ describe('SSH Connection Manager', () => {
       assert.deepStrictEqual(fs.readFileSync(localFile), content);
     });
   });
+
+  describe('后台任务', () => {
+    /** Exec client that records every command and answers with `output`. */
+    function setupJobs(configOverrides = {}, output = 'started job (pid 1)') {
+      const commands = [];
+      const client = new FakeClient({
+        onConnect: () => setImmediate(() => client.emit('ready')),
+        onExec: ({ command, callback }) => {
+          commands.push(command);
+          const stream = new FakeExecStream();
+          callback(undefined, stream);
+          setImmediate(() => {
+            stream.emit('data', Buffer.from(output));
+            stream.emit('exit', 0);
+            stream.emit('close', 0);
+          });
+        },
+      });
+
+      manager.createClient = () => client;
+      manager.scheduleStatusCollection = () => {};
+      manager.setConfig({
+        exec: createPasswordConfig({
+          name: 'exec',
+          transportMode: 'exec',
+          ...configOverrides,
+        }),
+      });
+
+      return commands;
+    }
+
+    it('jobStart 在远端启动包装脚本，命令被安全引用，返回 job id', async () => {
+      const commands = setupJobs();
+
+      const { jobId, message } = await manager.jobStart("echo 'it''s'; sleep 1", '/srv/app', 'exec');
+
+      assert.match(jobId, /^job-[a-z0-9]+-[0-9a-f]{4}$/);
+      assert.strictEqual(message, 'started job (pid 1)');
+      assert.strictEqual(commands.length, 1);
+      assert.ok(commands[0].includes(jobId));
+      assert.ok(commands[0].includes(String.raw`'echo '\''it'\'''\''s'\''; sleep 1'`), commands[0]);
+      assert.ok(commands[0].includes(`'/srv/app'`));
+    });
+
+    it('jobStart 与 execute-command 一样受黑名单约束，被拒绝时不会执行任何远端命令', async () => {
+      const commands = setupJobs({ commandBlacklist: ['^rm\\b'] });
+
+      await assert.rejects(
+        () => manager.jobStart('rm -rf /data', undefined, 'exec'),
+        (error) => {
+          assert.strictEqual(error.code, 'COMMAND_VALIDATION_FAILED');
+          return true;
+        },
+      );
+      assert.strictEqual(commands.length, 0);
+    });
+
+    it('配置了白名单时，被允许的命令可以后台运行，且 status/kill/list 的固定脚本不受白名单拦截', async () => {
+      const commands = setupJobs({ commandWhitelist: ['^echo .*$'] });
+
+      const { jobId } = await manager.jobStart('echo hi', undefined, 'exec');
+      await manager.jobStatus(jobId, {}, 'exec');
+      await manager.jobKill(jobId, 'exec');
+      await manager.jobList(5, 'exec');
+      assert.strictEqual(commands.length, 4);
+
+      await assert.rejects(
+        () => manager.jobStart('curl http://example.com', undefined, 'exec'),
+        (error) => {
+          assert.strictEqual(error.code, 'COMMAND_VALIDATION_FAILED');
+          return true;
+        },
+      );
+      assert.strictEqual(commands.length, 4);
+    });
+
+    it('jobStatus / jobKill 拒绝格式不合法的 job id，且不会发送到远端', async () => {
+      const commands = setupJobs();
+
+      for (const bad of ['', 'nope', 'job-abcdefgh-0000; rm -rf /', '../../etc']) {
+        await assert.rejects(() => manager.jobStatus(bad, {}, 'exec'), /Invalid job id/);
+        await assert.rejects(() => manager.jobKill(bad, 'exec'), /Invalid job id/);
+      }
+      assert.strictEqual(commands.length, 0);
+    });
+
+    it('jobStatus 的读取参数体现在脚本里（偏移量、尾部字节数、单次上限）', async () => {
+      const commands = setupJobs({}, '[job] x');
+
+      await manager.jobStatus('job-abcdefgh-0000', { offset: 42, maxBytes: 100 }, 'exec');
+      await manager.jobStatus('job-abcdefgh-0000', { tailBytes: 512 }, 'exec');
+
+      assert.ok(commands[0].includes('start=42;'));
+      assert.ok(commands[0].includes('-gt 100 ]'));
+      assert.ok(commands[1].includes('-gt 512 ]'));
+      assert.ok(commands[1].includes('-gt 65536 ]'));
+    });
+  });
 });
