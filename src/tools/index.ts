@@ -3,6 +3,7 @@ import { registerExecuteCommandTool } from "./execute-command.js";
 import { registerUploadTool } from "./upload.js";
 import { registerDownloadTool } from "./download.js";
 import { registerListServersTool } from "./list-servers.js";
+import { registerFileIoTools } from "./file-io.js";
 
 /**
  * Register all tools
@@ -13,4 +14,5 @@ export function registerAllTools(server: McpServer): void {
   registerUploadTool(server);
   registerDownloadTool(server);
   registerListServersTool(server);
+  registerFileIoTools(server);
 } 

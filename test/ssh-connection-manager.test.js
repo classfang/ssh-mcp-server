@@ -2039,6 +2039,274 @@ describe('SSH Connection Manager', () => {
     });
   });
 
+  describe('文件读写与目录传输', () => {
+    /** In-memory SFTP server: files, directories and the options used to write them. */
+    class MemSftp extends EventEmitter {
+      constructor() {
+        super();
+        this.files = new Map();
+        this.dirs = new Set(['/']);
+        this.writeOptions = new Map();
+        this.mkdirCalls = [];
+      }
+
+      end() {}
+
+      dirAttrs() {
+        return { size: 0, isFile: () => false, isDirectory: () => true };
+      }
+
+      fileAttrs(size) {
+        return { size, isFile: () => true, isDirectory: () => false };
+      }
+
+      stat(p, callback) {
+        setImmediate(() => {
+          if (this.dirs.has(p)) return callback(undefined, this.dirAttrs());
+          if (this.files.has(p)) return callback(undefined, this.fileAttrs(this.files.get(p).length));
+          callback(new Error('No such file'));
+        });
+      }
+
+      mkdir(p, callback) {
+        this.mkdirCalls.push(p);
+        setImmediate(() => {
+          if (this.dirs.has(p)) return callback(new Error('Failure'));
+          this.dirs.add(p);
+          callback();
+        });
+      }
+
+      readdir(p, callback) {
+        const prefix = p.endsWith('/') ? p : `${p}/`;
+        const entries = [];
+        for (const [file, buf] of this.files) {
+          if (file.startsWith(prefix) && !file.slice(prefix.length).includes('/')) {
+            entries.push({ filename: file.slice(prefix.length), attrs: this.fileAttrs(buf.length) });
+          }
+        }
+        for (const dir of this.dirs) {
+          if (dir !== p && dir.startsWith(prefix) && !dir.slice(prefix.length).includes('/')) {
+            entries.push({ filename: dir.slice(prefix.length), attrs: this.dirAttrs() });
+          }
+        }
+        setImmediate(() => callback(undefined, entries));
+      }
+
+      createReadStream(p, options = {}) {
+        const buf = this.files.get(p);
+        if (!buf) {
+          const stream = new Readable({ read() {} });
+          setImmediate(() => stream.destroy(new Error('No such file')));
+          return stream;
+        }
+        const end = options.end === undefined ? undefined : options.end + 1;
+        return Readable.from([buf.subarray(options.start ?? 0, end)]);
+      }
+
+      createWriteStream(p, options = {}) {
+        this.writeOptions.set(p, options);
+        const chunks = [];
+        const files = this.files;
+        return new Writable({
+          write(chunk, _encoding, callback) {
+            chunks.push(Buffer.from(chunk));
+            callback();
+          },
+          final(callback) {
+            const data = Buffer.concat(chunks);
+            files.set(p, options.flags === 'a' && files.has(p) ? Buffer.concat([files.get(p), data]) : data);
+            callback();
+          },
+        });
+      }
+    }
+
+    function setupMem(configOverrides = {}) {
+      const sftp = new MemSftp();
+      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ssh-mcp-fileio-'));
+      const client = new FakeClient({
+        onConnect: () => setImmediate(() => client.emit('ready')),
+        onSftp: (callback) => callback(undefined, sftp),
+      });
+
+      manager.createClient = () => client;
+      manager.scheduleStatusCollection = () => {};
+      manager.setConfig({
+        exec: createPasswordConfig({
+          name: 'exec',
+          transportMode: 'exec',
+          allowedLocalPaths: [tempDir],
+          ...configOverrides,
+        }),
+      });
+
+      return { sftp, tempDir };
+    }
+
+    it('readFile 返回带范围头部的文本，并说明下一个偏移量以便分页', async () => {
+      const { sftp } = setupMem();
+      sftp.files.set('/srv/a.txt', Buffer.from('0123456789'));
+
+      const whole = await manager.readFile('/srv/a.txt', {}, 'exec');
+      assert.strictEqual(
+        whole,
+        '[file] /srv/a.txt\n[bytes] 0-10 of 10 (end of file)\n---\n0123456789',
+      );
+
+      const page = await manager.readFile('/srv/a.txt', { offset: 2, length: 3 }, 'exec');
+      assert.match(page, /\[bytes\] 2-5 of 10 \(next offset 5\)/);
+      assert.ok(page.endsWith('---\n234'));
+
+      const past = await manager.readFile('/srv/a.txt', { offset: 999 }, 'exec');
+      assert.match(past, /\[bytes\] 10-10 of 10 \(end of file\)/);
+    });
+
+    it('readFile 保留多字节字符，分页切在字符中间时不判为二进制', async () => {
+      const { sftp } = setupMem();
+      sftp.files.set('/srv/zh.txt', Buffer.from('中文内容测试'));
+
+      const out = await manager.readFile('/srv/zh.txt', { offset: 1, length: 8 }, 'exec');
+      assert.match(out, /\[bytes\] 1-9 of 18/);
+    });
+
+    it('readFile 拒绝二进制文件（NUL 字节或大量无效 UTF-8）', async () => {
+      const { sftp } = setupMem();
+      sftp.files.set('/srv/nul.bin', Buffer.from([0x61, 0x00, 0x62]));
+      sftp.files.set('/srv/junk.bin', Buffer.alloc(200, 0xff));
+
+      for (const file of ['/srv/nul.bin', '/srv/junk.bin']) {
+        await assert.rejects(
+          () => manager.readFile(file, {}, 'exec'),
+          (error) => {
+            assert.strictEqual(error.code, 'SFTP_ERROR');
+            assert.match(error.message, /binary/);
+            return true;
+          },
+        );
+      }
+    });
+
+    it('readFile 对目录和不存在的文件给出明确错误', async () => {
+      const { sftp } = setupMem();
+      sftp.dirs.add('/srv');
+
+      await assert.rejects(() => manager.readFile('/srv', {}, 'exec'), /is a directory/);
+      await assert.rejects(() => manager.readFile('/srv/none.txt', {}, 'exec'), /File read failed/);
+    });
+
+    it('readFile / writeFile 受 allowedRemotePaths 限制', async () => {
+      setupMem({ allowedRemotePaths: ['/srv'] });
+
+      await assert.rejects(() => manager.readFile('/etc/passwd', {}, 'exec'), (error) => {
+        assert.strictEqual(error.code, 'REMOTE_PATH_NOT_ALLOWED');
+        return true;
+      });
+      await assert.rejects(() => manager.writeFile('/etc/x', 'x', {}, 'exec'), (error) => {
+        assert.strictEqual(error.code, 'REMOTE_PATH_NOT_ALLOWED');
+        return true;
+      });
+    });
+
+    it('writeFile 覆盖、追加，并原样保存引号、$ 与中文内容', async () => {
+      const { sftp } = setupMem();
+      const tricky = 'it\'s "quoted" $HOME `tick`\nEOF\n中文 ✓\n';
+
+      const wrote = await manager.writeFile('/srv/w.txt', tricky, {}, 'exec');
+      assert.match(wrote, /^Wrote \d+ bytes to \/srv\/w\.txt$/);
+      assert.strictEqual(sftp.files.get('/srv/w.txt').toString('utf8'), tricky);
+      assert.strictEqual(sftp.writeOptions.get('/srv/w.txt').flags, 'w');
+
+      const appended = await manager.writeFile('/srv/w.txt', 'more\n', { append: true }, 'exec');
+      assert.match(appended, /^Appended 5 bytes/);
+      assert.strictEqual(sftp.files.get('/srv/w.txt').toString('utf8'), `${tricky}more\n`);
+    });
+
+    it('writeFile 把 mode 传给 SFTP，未指定时不传', async () => {
+      const { sftp } = setupMem();
+
+      await manager.writeFile('/srv/run.sh', '#!/bin/sh\n', { mode: 0o755 }, 'exec');
+      await manager.writeFile('/srv/plain.txt', 'x', {}, 'exec');
+
+      assert.strictEqual(sftp.writeOptions.get('/srv/run.sh').mode, 0o755);
+      assert.ok(!('mode' in sftp.writeOptions.get('/srv/plain.txt')));
+    });
+
+    it('shell 模式下 readFile / writeFile 报 UNSUPPORTED_IN_SHELL_MODE', async () => {
+      setupMem({ transportMode: 'shell' });
+
+      for (const run of [
+        () => manager.readFile('/srv/a', {}, 'exec'),
+        () => manager.writeFile('/srv/a', 'x', {}, 'exec'),
+      ]) {
+        await assert.rejects(run, (error) => {
+          assert.strictEqual(error.code, 'UNSUPPORTED_IN_SHELL_MODE');
+          return true;
+        });
+      }
+    });
+
+    it('upload 目录：先建远端目录，再逐个上传文件，跳过符号链接', async () => {
+      const { sftp, tempDir } = setupMem();
+      const local = path.join(tempDir, 'tree');
+      fs.mkdirSync(path.join(local, 'sub', 'deeper'), { recursive: true });
+      fs.writeFileSync(path.join(local, 'top.txt'), 'top');
+      fs.writeFileSync(path.join(local, 'sub', 'mid.txt'), 'mid');
+      fs.writeFileSync(path.join(local, 'sub', 'deeper', 'low.txt'), 'low');
+      fs.symlinkSync('top.txt', path.join(local, 'link'));
+
+      const result = await manager.upload(local, '/srv/tree', 'exec');
+
+      assert.match(result, /Directory uploaded: 3 files to \/srv\/tree/);
+      assert.match(result, /1 non-regular entries/);
+      assert.deepStrictEqual(sftp.mkdirCalls, ['/srv/tree', '/srv/tree/sub', '/srv/tree/sub/deeper']);
+      assert.strictEqual(sftp.files.get('/srv/tree/top.txt').toString(), 'top');
+      assert.strictEqual(sftp.files.get('/srv/tree/sub/deeper/low.txt').toString(), 'low');
+      assert.ok(!sftp.files.has('/srv/tree/link'));
+    });
+
+    it('upload 目录：远端目录已存在时不报错', async () => {
+      const { sftp, tempDir } = setupMem();
+      sftp.dirs.add('/srv/tree');
+      const local = path.join(tempDir, 'tree');
+      fs.mkdirSync(local);
+      fs.writeFileSync(path.join(local, 'a.txt'), 'a');
+
+      const result = await manager.upload(local, '/srv/tree', 'exec');
+
+      assert.match(result, /1 files/);
+      assert.strictEqual(sftp.files.get('/srv/tree/a.txt').toString(), 'a');
+    });
+
+    it('download 目录：递归下载并保持目录结构，跳过 . 与 ..', async () => {
+      const { sftp, tempDir } = setupMem();
+      sftp.dirs.add('/srv/tree');
+      sftp.dirs.add('/srv/tree/sub');
+      sftp.files.set('/srv/tree/a.txt', Buffer.from('a'));
+      sftp.files.set('/srv/tree/sub/b.txt', Buffer.from('b'));
+      const local = path.join(tempDir, 'out');
+
+      const result = await manager.download('/srv/tree', local, 'exec');
+
+      assert.match(result, /Directory downloaded: 2 files to /);
+      assert.strictEqual(fs.readFileSync(path.join(local, 'a.txt'), 'utf8'), 'a');
+      assert.strictEqual(fs.readFileSync(path.join(local, 'sub', 'b.txt'), 'utf8'), 'b');
+    });
+
+    it('单个文件的上传下载行为不变', async () => {
+      const { sftp, tempDir } = setupMem();
+      const file = path.join(tempDir, 'one.txt');
+      fs.writeFileSync(file, 'one');
+
+      assert.strictEqual(await manager.upload(file, '/srv/one.txt', 'exec'), 'File uploaded successfully');
+      assert.strictEqual(sftp.files.get('/srv/one.txt').toString(), 'one');
+
+      const back = path.join(tempDir, 'back.txt');
+      assert.strictEqual(await manager.download('/srv/one.txt', back, 'exec'), 'File downloaded successfully');
+      assert.strictEqual(fs.readFileSync(back, 'utf8'), 'one');
+    });
+  });
+
   describe('SFTP 并发传输', () => {
     const FAST_MIN_BYTES = 256 * 1024;
 
@@ -2108,20 +2376,6 @@ describe('SSH Connection Manager', () => {
 
       assert.strictEqual(sftp.fastGetCalls.length, 0);
       assert.deepStrictEqual(fs.readFileSync(localFile), content);
-    });
-
-    it('远端目录不会走 fastGet', async () => {
-      const sftp = new FakeTransferSftp({
-        statSizes: [FAST_MIN_BYTES],
-        isFile: false,
-        remoteContent: Buffer.alloc(0),
-      });
-      const tempDir = setupTransfer(sftp);
-
-      await manager.download('/remote/dir', path.join(tempDir, 'dir'), 'exec');
-
-      assert.strictEqual(sftp.fastGetCalls.length, 0);
-      assert.strictEqual(sftp.readStreamCalls.length, 1);
     });
 
     it('大文件下载使用 fastGet 并发传输', async () => {
