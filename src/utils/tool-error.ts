@@ -20,6 +20,12 @@ export class ToolError extends Error {
     public readonly code: ToolErrorCode,
     message: string,
     public readonly retriable: boolean = false,
+    /**
+     * True when the remote command really ran and ended with a non-zero exit
+     * status or a signal. The message is then the command's own output, not a
+     * failure of this tool.
+     */
+    public readonly commandRan: boolean = false,
   ) {
     super(message);
     this.name = "ToolError";

@@ -1386,6 +1386,62 @@ describe('SSH Connection Manager', () => {
       assert.strictEqual(client.execCalls.length, 1);
     });
 
+    it('命令以非零退出码结束时，错误带 commandRan 标记且消息以退出码结尾', async () => {
+      const stream = new FakeExecStream();
+      const client = new FakeClient({
+        onConnect: () => setImmediate(() => client.emit('ready')),
+        onExec: ({ callback }) => {
+          callback(undefined, stream);
+          setImmediate(() => {
+            stream.emit('data', Buffer.from('partial\n'));
+            stream.emit('exit', 1);
+            stream.emit('close', 1);
+          });
+        },
+      });
+
+      manager.createClient = () => client;
+      manager.scheduleStatusCollection = () => {};
+      manager.setConfig({
+        exec: createPasswordConfig({ name: 'exec', transportMode: 'exec' }),
+      });
+
+      await assert.rejects(
+        () => manager.executeCommand('grep nomatch f', undefined, 'exec'),
+        (error) => {
+          assert.strictEqual(error.commandRan, true);
+          assert.strictEqual(error.message, 'partial\n[exit code] 1');
+          return true;
+        },
+      );
+    });
+
+    it('命令超时时，即使 close 事件同步触发也不会被当成成功', async () => {
+      // FakeExecStream.close() emits "close" synchronously, which used to turn
+      // the timeout into an empty success.
+      const stream = new FakeExecStream();
+      const client = new FakeClient({
+        onConnect: () => setImmediate(() => client.emit('ready')),
+        onExec: ({ callback }) => callback(undefined, stream),
+      });
+
+      manager.createClient = () => client;
+      manager.scheduleStatusCollection = () => {};
+      manager.setConfig({
+        exec: createPasswordConfig({ name: 'exec', transportMode: 'exec' }),
+      });
+
+      await assert.rejects(
+        () => manager.executeCommand('sleep 100', undefined, 'exec', { timeout: 20 }),
+        (error) => {
+          assert.strictEqual(error.code, 'COMMAND_TIMEOUT');
+          assert.strictEqual(error.commandRan, false);
+          assert.match(error.message, /\[timeout\] Command timed out after 20ms/);
+          return true;
+        },
+      );
+    });
+
     it('命令成功时保留 stderr 而不是丢弃', async () => {
       const stream = new FakeExecStream();
       const client = new FakeClient({
