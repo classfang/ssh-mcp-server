@@ -252,13 +252,15 @@ Blacklist example (block destructive commands):
         "--port", "22",
         "--username", "root",
         "--password", "pwd123456",
-        "--blacklist", "^rm .*,^shutdown.*,^reboot.*"
+        "--blacklist", "(?i:^\\s*rm .*),(?i:^\\s*shutdown.*),(?i:^\\s*reboot.*)"
       ]
     }
   }
 }
 ```
 
+> Note: Blacklist patterns are case-sensitive by default — `^shutdown.*` does not stop `Shutdown /a`. For case-insensitive matching, wrap each pattern in a **scoped inline modifier**: `(?i:pattern)`. Do not use a bare `(?i)` — JavaScript regular expressions do not support it, and an invalid pattern makes the server fail at startup. Remember to escape backslashes inside JSON: write `\\s` for the regex `\s` (the `^\\s*` in the example tolerates leading spaces).
+>
 > Note: If both whitelist and blacklist are specified, the command must fully match a whitelist pattern and must not match a blacklist pattern. Always use explicit `^` and `$` anchors in whitelist patterns to make them easy to read and audit. If several operations must be combined, put that logic in a separately reviewed script and whitelist only the fixed script invocation; do not try to parse shell syntax with simple string splitting.
 
 ### 7. 🧩 Wrapping Commands With a Template
