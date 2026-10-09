@@ -327,7 +327,7 @@ export class CommandLineParser {
         }
       } else {
         // ===== 单值：既有单主机行为，完全不变 =====
-        const host = hostRaw;
+        const host = hosts[0];
 
         // 尝试从 SSH config 读取配置
         let sshConfigEntry = null;

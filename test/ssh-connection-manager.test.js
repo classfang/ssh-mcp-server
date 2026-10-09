@@ -2408,6 +2408,19 @@ describe('SSH Connection Manager', () => {
       assert.ok(!sftp.files.has('/srv/tree/link'));
     });
 
+    it('upload 目录：子目录不能通过 Windows 路径语义逃出远端白名单', { skip: process.platform === 'win32' }, async () => {
+      const { sftp, tempDir } = setupMem({ allowedRemotePaths: ['C:/allowed'] });
+      const local = path.join(tempDir, 'tree');
+      fs.mkdirSync(path.join(local, '..\\outside'), { recursive: true });
+      try {
+        await assert.rejects(manager.upload(local, 'C:/allowed', 'exec'),
+          (error) => error instanceof ToolError && error.code === 'REMOTE_PATH_NOT_ALLOWED');
+        assert.ok(!sftp.mkdirCalls.includes('C:/allowed/..\\outside'));
+      } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+      }
+    });
+
     it('upload 目录：远端目录已存在时不报错', async () => {
       const { sftp, tempDir } = setupMem();
       sftp.dirs.add('/srv/tree');
@@ -2434,6 +2447,37 @@ describe('SSH Connection Manager', () => {
       assert.match(result, /Directory downloaded: 2 files to /);
       assert.strictEqual(fs.readFileSync(path.join(local, 'a.txt'), 'utf8'), 'a');
       assert.strictEqual(fs.readFileSync(path.join(local, 'sub', 'b.txt'), 'utf8'), 'b');
+    });
+
+    it('download 目录：拒绝通过本地符号链接在允许路径外创建目录', async () => {
+      const { sftp, tempDir } = setupMem();
+      const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'ssh-mcp-outside-'));
+      try {
+        const local = path.join(tempDir, 'out');
+        fs.mkdirSync(local);
+        fs.symlinkSync(outside, path.join(local, 'link'), 'dir');
+        for (const dir of ['/srv/tree', '/srv/tree/link', '/srv/tree/link/created']) sftp.dirs.add(dir);
+        await assert.rejects(manager.download('/srv/tree', local, 'exec'),
+          (error) => error instanceof ToolError && error.code === 'LOCAL_PATH_NOT_ALLOWED');
+        assert.ok(!fs.existsSync(path.join(outside, 'created')));
+      } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+        fs.rmSync(outside, { recursive: true, force: true });
+      }
+    });
+
+    it('download 目录：拒绝远端返回的跨目录文件名', async () => {
+      const { sftp, tempDir } = setupMem();
+      sftp.dirs.add('/srv/tree');
+      sftp.readdir = (remote, callback) => callback(undefined, remote === '/srv/tree'
+        ? [{ filename: '../escaped', attrs: sftp.dirAttrs() }] : []);
+      try {
+        await assert.rejects(manager.download('/srv/tree', path.join(tempDir, 'out'), 'exec'),
+          (error) => error instanceof ToolError && error.code === 'SFTP_ERROR');
+        assert.ok(!fs.existsSync(path.join(tempDir, 'escaped')));
+      } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+      }
     });
 
     it('单个文件的上传下载行为不变', async () => {

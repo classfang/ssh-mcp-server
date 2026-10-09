@@ -816,7 +816,7 @@ export class SSHConnectionManager {
       return "File downloaded successfully";
     } catch (error) {
       await this.unlinkIfExists(tempLocalPath);
-      if (error instanceof ToolError && error.code === "OPERATION_TIMEOUT") {
+      if (error instanceof ToolError) {
         throw error;
       }
       if (
@@ -1057,8 +1057,9 @@ export class SSHConnectionManager {
     const { sftp, key, timeoutMs } = await this.openSftpFor(name);
     try {
       for (const dir of dirs) {
+        const validatedDir = this.validateRemotePath(dir, name);
         await this.withTimeout(
-          this.mkdirRemote(sftp, dir),
+          this.mkdirRemote(sftp, validatedDir),
           timeoutMs,
           () => this.invalidateConnection(key),
           `SFTP mkdir timed out after ${timeoutMs}ms`,
@@ -1120,6 +1121,14 @@ export class SSHConnectionManager {
         if (filename === "." || filename === "..") {
           continue;
         }
+        // 远端目录项只能是单个文件名，避免跨目录路径逃出下载目标。
+        if (!filename || /[\/\\\0]/.test(filename)) {
+          throw new ToolError(
+            "SFTP_ERROR",
+            `Invalid remote directory entry: ${JSON.stringify(filename)}`,
+            false,
+          );
+        }
         const remoteChild = path.posix.join(remote, filename);
         const localChild = path.join(local, filename);
         if (attrs.isDirectory()) {
@@ -1142,7 +1151,9 @@ export class SSHConnectionManager {
     await walk(remoteDir, localDir);
 
     for (const dir of localDirs) {
-      await fs.promises.mkdir(dir, { recursive: true });
+      // 按父子顺序逐个校验，现有符号链接不能将建目录操作引向白名单之外。
+      const validatedDir = this.validateLocalPath(dir, name, "write");
+      await fs.promises.mkdir(validatedDir, { recursive: true });
     }
     for (const file of files) {
       try {

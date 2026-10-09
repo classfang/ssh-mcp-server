@@ -68,8 +68,8 @@ export function buildJobStartScript(
   return [
     `J=${dir}`,
     'mkdir -p "$J" || echo "cannot create $J"',
-    // Prune old finished jobs; only this tool's own job-* directories.
-    `find "${JOB_ROOT}" -mindepth 1 -maxdepth 1 -type d -name 'job-*' -mtime +${JOB_RETENTION_DAYS} -exec rm -rf {} + 2>/dev/null`,
+    // 只按结束标记的时间清理任务，保留仍在运行或刚结束的旧任务。
+    `find "${JOB_ROOT}" -mindepth 2 -maxdepth 2 -type f \\( -name exit -o -name killed \\) -mtime +${JOB_RETENTION_DAYS} -exec sh -c ${shellQuote('for marker do job=${marker%/*}; case "${job##*/}" in job-*) rm -rf -- "$job";; esac; done')} sh {} + 2>/dev/null`,
     `printf '%s\\n' ${shellQuote(command)} > "$J/cmd"`,
     'date +%s > "$J/started"',
     'S=""; command -v setsid >/dev/null 2>&1 && S=setsid',

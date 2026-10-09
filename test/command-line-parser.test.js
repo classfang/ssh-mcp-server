@@ -594,6 +594,20 @@ Host hostb
       }
     });
 
+    it('空项过滤后只剩一个别名时仍应正确展开', () => {
+      const configPath = writeMultiConfig();
+      try {
+        for (const host of ['hosta,', ', hosta ,', ' hosta ']) {
+          process.argv = ['node', 'test', '--host', host, '--username', 'u', '--password', 'p', '--ssh-config-file', configPath];
+          const result = CommandLineParser.parseArgs();
+          assert.strictEqual(result.configs.default.host, '172.16.0.10');
+          assert.strictEqual(result.configs.default.port, 2222);
+        }
+      } finally {
+        fs.rmSync(configPath, { force: true });
+      }
+    });
+
     it('单值含逗号以外的行为保持不变：连接名仍为 default', () => {
       process.argv = ['node', 'test', '--host', '1.2.3.4', '--port', '22', '--username', 'user', '--password', 'pass'];
       const result = CommandLineParser.parseArgs();

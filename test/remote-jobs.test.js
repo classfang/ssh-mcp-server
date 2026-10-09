@@ -150,6 +150,32 @@ describe('remote jobs', () => {
       assert.match(run(buildJobKillScript(id)), /is not running \(state: lost\)/);
     });
 
+    it('启动新任务只清理结束超过保留期的任务，保留运行中及刚结束的旧任务', () => {
+      const oldDate = new Date(Date.now() - 10 * 86400000);
+      const root = path.join(home, '.ssh-mcp-jobs');
+      const running = path.join(root, 'job-running1-aaaa');
+      const recent = path.join(root, 'job-recent01-bbbb');
+      const exited = path.join(root, 'job-exited01-cccc');
+      const killed = path.join(root, 'job-killed01-dddd');
+      const unrelated = path.join(root, 'other-data');
+      for (const dir of [running, recent, exited, killed, unrelated]) {
+        fs.mkdirSync(dir, { recursive: true });
+        fs.writeFileSync(path.join(dir, 'cmd'), 'true');
+      }
+      fs.writeFileSync(path.join(recent, 'exit'), '0');
+      for (const [dir, marker] of [[exited, 'exit'], [killed, 'killed'], [unrelated, 'exit']]) {
+        fs.writeFileSync(path.join(dir, marker), '0');
+        fs.utimesSync(path.join(dir, marker), oldDate, oldDate);
+      }
+      for (const dir of [running, recent, exited, killed, unrelated]) fs.utimesSync(dir, oldDate, oldDate);
+      run(buildJobStartScript(generateJobId(), 'true'));
+      assert.ok(fs.existsSync(running), '未结束的旧任务必须保留');
+      assert.ok(fs.existsSync(recent), '保留期从结束时间计算');
+      assert.ok(!fs.existsSync(exited));
+      assert.ok(!fs.existsSync(killed));
+      assert.ok(fs.existsSync(unrelated));
+    });
+
     it('不存在的任务给出说明而不是报错，list 列出已有任务', () => {
       assert.match(status('job-abcdefgh-0000'), /not found/);
       const list = run(buildJobListScript(50));
