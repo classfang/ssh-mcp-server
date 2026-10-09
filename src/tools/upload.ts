@@ -16,7 +16,7 @@ export function registerUploadTool(server: McpServer): void {
       description: "Upload file to connected server",
       inputSchema: {
         localPath: z.string().describe("Local path"),
-        remotePath: z.string().describe("Remote path"),
+        remotePath: z.string().describe("Remote path (POSIX absolute like /home/user/file.txt, or Windows drive-absolute like C:/Users/file.txt)"),
         connectionName: z.string().optional().describe("SSH connection name (optional, default is 'default')"),
       },
     },

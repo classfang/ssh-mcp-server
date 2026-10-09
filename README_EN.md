@@ -619,7 +619,7 @@ Options:
   --proxy             Proxy URL supporting SOCKS5, HTTP, and HTTPS
   -s, --socksProxy    Legacy SOCKS5 proxy URL
   --allowed-local-paths   Additional allowed local paths for upload/download, comma-separated
-  --allowed-remote-paths  Allowed remote (POSIX, absolute) paths for SFTP upload/download, comma-separated
+  --allowed-remote-paths  Allowed remote paths (POSIX absolute or Windows drive-absolute, e.g. /var/log or C:/Users) for SFTP upload/download, comma-separated
   --transport-mode    SSH transport mode: exec or shell (default: exec)
   --shell-ready-timeout   Shell readiness probe timeout in milliseconds (default: 10000)
   --command-template  Command template, use <quotedCommand> for shell arguments or <command> for raw insertion
@@ -638,7 +638,7 @@ This server provides powerful capabilities to execute commands and transfer file
 - **Denial of Service (DoS)**: The server does not have built-in rate limiting. An attacker could potentially launch a DoS attack by flooding the server with connection requests or large file transfers. It is recommended to run the server behind a firewall or reverse proxy with rate-limiting capabilities.
 - **Path Traversal**: The server has built-in protection against path traversal attacks on the local filesystem. However, it is still important to be mindful of the paths used in `upload` and `download` commands.
 - **Local Transfer Scope**: By default, local file transfers are restricted to the current working directory. Use `--allowed-local-paths` or `allowedLocalPaths` in config only for explicitly trusted directories.
-- **Remote Transfer Scope**: SFTP upload/download accepts only absolute POSIX paths. If `allowedRemotePaths` (or `--allowed-remote-paths`) is not configured, any remote path is accepted and the server prints a startup warning. Configure `allowedRemotePaths` to whitelist a small set of remote directories; this is strongly recommended to prevent prompt-injection-driven reads or writes of files like `~/.ssh/authorized_keys` or `/etc/sshd_config`.
+- **Remote Transfer Scope**: SFTP upload/download accepts POSIX absolute paths (e.g. `/var/log/app.log`) and Windows drive-absolute paths (e.g. `C:/Users/foo/bar.txt`, auto-normalized to forward slashes). If `allowedRemotePaths` (or `--allowed-remote-paths`) is not configured, any remote path is accepted and the server prints a startup warning. Configure `allowedRemotePaths` to whitelist a small set of remote directories; this is strongly recommended to prevent prompt-injection-driven reads or writes of files like `~/.ssh/authorized_keys` or `/etc/sshd_config`.
 
 ## 🌟 Star History
 

@@ -726,6 +726,23 @@ Host hostb
       assert.throws(() => CommandLineParser.parseArgs(), /absolute POSIX/);
     });
 
+    it('应该正确解析 Windows 风格的 allowed remote paths', () => {
+      process.argv = ['node', 'test', '--host', '1.2.3.4', '--port', '22', '--username', 'user', '--password', 'pass', '--allowed-remote-paths', 'C:\\Users\\ops,D:/data/,c:/temp'];
+      const result = CommandLineParser.parseArgs();
+
+      assert.deepStrictEqual(
+        result.configs.default.allowedRemotePaths,
+        ['C:/Users/ops', 'D:/data', 'c:/temp']
+      );
+    });
+
+    it('非法的 allowedRemotePaths 条目应抛出错误', () => {
+      for (const badEntry of ['C:', 'C:relative\\dir', '\\Users\\ops', '\\\\server\\share']) {
+        process.argv = ['node', 'test', '--host', '1.2.3.4', '--port', '22', '--username', 'user', '--password', 'pass', '--allowed-remote-paths', badEntry];
+        assert.throws(() => CommandLineParser.parseArgs(), /absolute POSIX/);
+      }
+    });
+
     it('应该正确解析配置文件中的 commandTemplate', () => {
       const templateConfigPath = path.join(fixturesDir, 'template-config.json');
       fs.writeFileSync(templateConfigPath, JSON.stringify({

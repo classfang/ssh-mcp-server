@@ -10,6 +10,10 @@ import { collectSystemStatus } from "../utils/status-collector.js";
 import { ToolError } from "../utils/tool-error.js";
 import fs from "fs";
 import path from "path";
+import {
+  isRemotePathWithinRoot,
+  normalizeRemotePath,
+} from "../utils/remote-path.js";
 import type { Duplex } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { StringDecoder } from "node:string_decoder";
@@ -548,28 +552,37 @@ export class SSHConnectionManager {
         false,
       );
     }
-    if (!path.posix.isAbsolute(remotePath)) {
+    let resolvedPath: string;
+    try {
+      resolvedPath = normalizeRemotePath(remotePath);
+    } catch (error) {
       throw new ToolError(
         "REMOTE_PATH_NOT_ALLOWED",
-        `Remote path must be an absolute POSIX path, got: ${remotePath}`,
+        (error as Error).message,
         false,
       );
     }
-
-    const resolvedPath = path.posix.normalize(remotePath);
     const config = this.getConfig(name);
-    const allowedRoots = config.allowedRemotePaths || [];
+    const allowedRoots = (config.allowedRemotePaths || []).map(
+      (allowedRoot) => {
+        try {
+          return normalizeRemotePath(allowedRoot);
+        } catch (error) {
+          throw new ToolError(
+            "REMOTE_PATH_NOT_ALLOWED",
+            `Invalid allowedRemotePaths entry "${allowedRoot}": ${(error as Error).message}`,
+            false,
+          );
+        }
+      },
+    );
 
     if (allowedRoots.length === 0) {
       return resolvedPath;
     }
 
-    const isAllowed = allowedRoots.some(
-      (allowedRoot) =>
-        resolvedPath === allowedRoot ||
-        resolvedPath.startsWith(
-          allowedRoot.endsWith("/") ? allowedRoot : `${allowedRoot}/`,
-        ),
+    const isAllowed = allowedRoots.some((allowedRoot) =>
+      isRemotePathWithinRoot(resolvedPath, allowedRoot),
     );
 
     if (!isAllowed) {

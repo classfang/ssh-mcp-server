@@ -22,7 +22,7 @@ Options:
   --proxy <url>                    Proxy URL (SOCKS5, HTTP, or HTTPS)
   -s, --socksProxy <url>           Legacy SOCKS5 proxy URL
   --allowed-local-paths <paths>    Extra allowed local paths, comma-separated
-  --allowed-remote-paths <paths>   Allowed remote POSIX absolute paths, comma-separated
+  --allowed-remote-paths <paths>   Allowed remote paths (POSIX or Windows drive-absolute), comma-separated
   --transport-mode <mode>          SSH transport mode: exec or shell (default: exec)
   --shell-ready-timeout <ms>       Shell readiness probe timeout (default: 10000)
   --command-template <template>    Wrap commands with <command> or <quotedCommand>

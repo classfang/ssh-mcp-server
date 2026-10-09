@@ -589,6 +589,93 @@ describe('SSH Connection Manager', () => {
         (err) => err instanceof ToolError && err.code === 'REMOTE_PATH_NOT_ALLOWED',
       );
     });
+
+    it('未配置 allowedRemotePaths 时 validateRemotePath 放行 Windows 绝对路径', () => {
+      manager.setConfig({
+        dev: createPasswordConfig({ name: 'dev' }),
+      });
+
+      assert.strictEqual(
+        manager.validateRemotePath('C:\\Users\\foo\\bar.txt', 'dev'),
+        'C:/Users/foo/bar.txt',
+      );
+      assert.strictEqual(
+        manager.validateRemotePath('d:/data/file.log', 'dev'),
+        'd:/data/file.log',
+      );
+    });
+
+    it('validateRemotePath 拒绝 Windows 相对路径形式', () => {
+      manager.setConfig({
+        dev: createPasswordConfig({ name: 'dev' }),
+      });
+
+      for (const badPath of ['C:', 'C:foo\\bar', '\\Users\\foo', '\\\\server\\share\\file']) {
+        assert.throws(
+          () => manager.validateRemotePath(badPath, 'dev'),
+          (err) => err instanceof ToolError && err.code === 'REMOTE_PATH_NOT_ALLOWED',
+        );
+      }
+    });
+
+    it('配置 Windows allowedRemotePaths 后按前缀与白名单校验', () => {
+      manager.setConfig({
+        dev: createPasswordConfig({
+          name: 'dev',
+          allowedRemotePaths: ['C:\\Users\\ops', 'D:/data'],
+        }),
+      });
+
+      assert.strictEqual(
+        manager.validateRemotePath('C:\\Users\\ops\\file.txt', 'dev'),
+        'C:/Users/ops/file.txt',
+      );
+      // Windows 匹配大小写不敏感
+      assert.strictEqual(
+        manager.validateRemotePath('c:/users/ops/file.txt', 'dev'),
+        'c:/users/ops/file.txt',
+      );
+      assert.strictEqual(
+        manager.validateRemotePath('D:\\data\\sub\\f.log', 'dev'),
+        'D:/data/sub/f.log',
+      );
+      // prefix-string trap: C:/Users/ops-other must NOT match C:/Users/ops
+      assert.throws(
+        () => manager.validateRemotePath('C:/Users/ops-other/f', 'dev'),
+        (err) => err instanceof ToolError && err.code === 'REMOTE_PATH_NOT_ALLOWED',
+      );
+      assert.throws(
+        () => manager.validateRemotePath('D:/secret.txt', 'dev'),
+        (err) => err instanceof ToolError && err.code === 'REMOTE_PATH_NOT_ALLOWED',
+      );
+      // POSIX 路径不匹配 Windows 白名单
+      assert.throws(
+        () => manager.validateRemotePath('/home/ops/file', 'dev'),
+        (err) => err instanceof ToolError && err.code === 'REMOTE_PATH_NOT_ALLOWED',
+      );
+    });
+
+    it('Windows 远端路径被拒时应指出解析结果和允许的根路径', () => {
+      manager.setConfig({
+        dev: createPasswordConfig({
+          name: 'dev',
+          allowedRemotePaths: ['C:/Users/ops'],
+        }),
+      });
+
+      assert.throws(
+        () => manager.validateRemotePath('C:\\Users\\ops\\..\\..\\Windows\\system32\\drivers\\etc\\hosts', 'dev'),
+        (error) => {
+          assert.strictEqual(error.code, 'REMOTE_PATH_NOT_ALLOWED');
+          assert.match(error.message, /Resolved to: C:\/Windows\/system32\/drivers\/etc\/hosts\./);
+          assert.match(
+            error.message,
+            /Allowed remote paths for this connection: C:\/Users\/ops\./,
+          );
+          return true;
+        },
+      );
+    });
   });
 
   describe('默认连接名称', () => {

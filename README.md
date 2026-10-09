@@ -625,7 +625,7 @@ npx @fangjunjie/ssh-mcp-server \
   --proxy             代理地址，支持 SOCKS5、HTTP 和 HTTPS
   -s, --socksProxy    旧版 SOCKS5 代理地址（兼容参数）
   --allowed-local-paths   upload/download 允许访问的额外本地路径，逗号分隔
-  --allowed-remote-paths  SFTP upload/download 允许访问的远端路径（POSIX 绝对路径），逗号分隔
+  --allowed-remote-paths  SFTP upload/download 允许访问的远端路径（POSIX 绝对路径或 Windows 盘符绝对路径，如 /var/log 或 C:/Users），逗号分隔
   --transport-mode    SSH transport 模式: exec 或 shell（默认: exec）
   --shell-ready-timeout   shell 就绪探测超时，单位毫秒（默认: 10000）
   --command-template  命令模板；shell 参数用 <quotedCommand>，原样插入用 <command>
@@ -644,7 +644,7 @@ npx @fangjunjie/ssh-mcp-server \
 - **拒绝服务攻击 (DoS)**：服务器没有内置的速率限制。攻击者可能通过向服务器发送大量连接请求或大文件传输来发起 DoS 攻击。建议在具有速率限制功能的防火墙或反向代理后面运行服务器。
 - **路径遍历**：服务器内置了对本地文件系统路径遍历攻击的保护。但是，仍然需要注意在 `upload` 和 `download` 命令中使用的路径。
 - **本地传输范围**：默认仅允许访问当前工作目录。只有在明确可信时，才建议通过 `--allowed-local-paths` 或配置文件中的 `allowedLocalPaths` 放宽范围。
-- **远端传输范围**：SFTP upload/download 仅接受绝对 POSIX 路径。未配置 `allowedRemotePaths`（或 `--allowed-remote-paths`）时，任意远端路径都允许，但启动时会打印警告。强烈建议显式配置 `allowedRemotePaths` 白名单，避免模型被 prompt 注入后读写 `~/.ssh/authorized_keys`、`/etc/sshd_config` 之类敏感文件。
+- **远端传输范围**：SFTP upload/download 接受 POSIX 绝对路径（如 `/var/log/app.log`）和 Windows 盘符绝对路径（如 `C:/Users/foo/bar.txt`，自动归一化为正斜杠）。未配置 `allowedRemotePaths`（或 `--allowed-remote-paths`）时，任意远端路径都允许，但启动时会打印警告。强烈建议显式配置 `allowedRemotePaths` 白名单，避免模型被 prompt 注入后读写 `~/.ssh/authorized_keys`、`/etc/sshd_config` 之类敏感文件。
 
 ## 🌟 Star 历史
 

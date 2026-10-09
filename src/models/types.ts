@@ -20,7 +20,7 @@ export interface SSHConfig {
   algorithms?: Algorithms; // Custom SSH algorithms (kex, cipher, serverHostKey, hmac, compress)
   pty?: boolean; // Allocate pseudo-tty for command execution, default: true
   allowedLocalPaths?: string[]; // Allowed local paths for upload/download
-  allowedRemotePaths?: string[]; // Allowed remote paths for SFTP upload/download (POSIX, absolute)
+  allowedRemotePaths?: string[]; // Allowed remote paths for SFTP upload/download (POSIX or Windows drive-absolute)
   transportMode?: "exec" | "shell"; // SSH transport mode, default: exec
   shellReadyTimeoutMs?: number; // Shell readiness probe timeout, default: 10000ms
   shellCommandTimeoutMs?: number; // Shell command timeout override, default: 30000ms

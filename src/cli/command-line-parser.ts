@@ -4,6 +4,7 @@ import fs from "fs";
 import path from "path";
 import os from "os";
 import { lookupSshConfig } from "../utils/ssh-config-parser.js";
+import { normalizeRemotePath as normalizeAbsoluteRemotePath } from "../utils/remote-path.js";
 
 /**
  * Command line argument parser class
@@ -599,16 +600,13 @@ export class CommandLineParser {
     if (!remotePath) {
       return "";
     }
-    if (!path.posix.isAbsolute(remotePath)) {
+    try {
+      return normalizeAbsoluteRemotePath(remotePath);
+    } catch {
       throw new Error(
-        `allowedRemotePaths entries must be absolute POSIX paths, got: ${remotePath}`,
+        `allowedRemotePaths entries must be absolute POSIX or Windows absolute paths (e.g. /var/log or C:/Users), got: ${remotePath}`,
       );
     }
-    const normalized = path.posix.normalize(remotePath);
-    if (normalized.length > 1 && normalized.endsWith("/")) {
-      return normalized.slice(0, -1);
-    }
-    return normalized;
   }
 }
 

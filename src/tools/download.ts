@@ -15,7 +15,7 @@ export function registerDownloadTool(server: McpServer): void {
     {
       description: "Download file from connected server",
       inputSchema: {
-        remotePath: z.string().describe("Remote path"),
+        remotePath: z.string().describe("Remote path (POSIX absolute like /home/user/file.txt, or Windows drive-absolute like C:/Users/file.txt)"),
         localPath: z.string().describe("Local path"),
         connectionName: z.string().optional().describe("SSH connection name (optional, default is 'default')"),
       },
