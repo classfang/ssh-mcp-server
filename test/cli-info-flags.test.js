@@ -18,7 +18,7 @@ const expectedHelpOptions = [
   '--config-file <path>',
   '--ssh-config-file <path>',
   '--ssh <config>',
-  '-h, --host <host>',
+  '-h, --host <hosts>',
   '-p, --port <port>',
   '-u, --username <name>',
   '-w, --password <password>',

@@ -188,103 +188,240 @@ export class CommandLineParser {
       }
     }
 
-    // Priority 3: Compatible with single connection legacy parameters
+    // Priority 3: Compatible with single connection legacy parameters.
+    // --host 支持逗号分隔多值：单值保持既有单主机行为不变（连接名"default"）；多值进入多连接模式，每个值作为独立连接，连接名为该值本身。每个值独立套用既有合并规则：命中 SSH config 别名则合并其 HostName/Port/User/IdentityFile，CLI 参数逐字段覆盖。
     if (Object.keys(configMap).length === 0) {
-      const host = values.host || positionals[0];
+      const hostRaw = values.host || positionals[0];
 
-      // 尝试从 SSH config 读取配置
-      let sshConfigEntry = null;
-      if (host) {
-        try {
-          sshConfigEntry = lookupSshConfig(host, values["ssh-config-file"]);
-        } catch (err) {
-          // 显式指定配置文件但读取失败时抛错
-          throw err;
-        }
-      }
-
-      const portStr = values.port || positionals[1] || sshConfigEntry?.port?.toString() || "22";
-      const username = values.username || positionals[2] || sshConfigEntry?.user;
-      const password = values.password || positionals[3];
-      // 私钥来源：命令行参数 > SSH config 的 IdentityFile
-      const privateKey =
-        values.privateKey || sshConfigEntry?.identityFile;
-      const passphrase = values.passphrase || process.env.SSH_MCP_PASSPHRASE;
-      const resolvedAgent = values.agent !== undefined
-        ? values.agent
-        : !password && !privateKey
-        ? findDefaultAgent()
-        : undefined;
-
-      // OpenSSH 风格回退：SSH config 命中了主机别名，但没有提供任何认证信息（无 IdentityFile / password / agent）时，模仿 ssh 客户端自动尝试 ~/.ssh 下的默认身份文件（id_rsa、id_ecdsa、id_ed25519 等）
-      const defaultPrivateKey =
-        !privateKey && !password && !resolvedAgent && sshConfigEntry
-          ? findDefaultIdentityFile()
-          : undefined;
-      const effectivePrivateKey = privateKey || defaultPrivateKey;
-      const whitelist = values.whitelist;
-      const blacklist = values.blacklist;
-      const allowedLocalPaths = values["allowed-local-paths"];
-      const allowedRemotePaths = values["allowed-remote-paths"];
-      const commandTemplate = values["command-template"];
-      const pty = this.parseBoolean(values.pty);
-      const tryKeyboard = values["try-keyboard"];
-
-      // 实际连接地址：优先使用 SSH config 的 HostName
-      const actualHost = sshConfigEntry?.hostName || host;
-
-      if (!actualHost || !portStr || !username || (!password && !effectivePrivateKey && !resolvedAgent)) {
+      // 拆分逗号分隔的多值（单值不含逗号时 hosts 长度为 1，走原路径）
+      const hosts: string[] = hostRaw
+        ? hostRaw
+            .split(",")
+            .map((h) => h.trim())
+            .filter(Boolean)
+        : [];
+      if (hostRaw && hosts.length === 0) {
         throw new Error(
-          "Missing required parameters, need to provide host, port, username and password, private key or agent"
+          `Invalid --host value: ${hostRaw}. Host list cannot be empty.`
         );
       }
 
-      const port = parseInt(portStr, 10);
-      if (isNaN(port)) {
-        throw new Error("Port must be a valid number");
-      }
+      if (hosts.length > 1) {
+        // ===== 多值：多连接模式 =====
+        // 认证模式开关：CLI 认证参数（--password/--privateKey/--agent）一旦出现即整体声明"全部主机共享该认证"，SSH config 的 IdentityFile 不参与；否则每个别名独立从 SSH config 解析认证（IdentityFile > 默认身份文件 > SSH agent）。
+        const hasCliAuth =
+          values.password !== undefined ||
+          values.privateKey !== undefined ||
+          values.agent !== undefined;
 
-      configMap["default"] = this.normalizeConfig({
-        name: "default",
-        host: actualHost,
-        port,
-        username,
-        password,
-        privateKey: effectivePrivateKey,
-        passphrase,
-        agent: resolvedAgent,
-        proxy: values.proxy,
-        socksProxy: values.socksProxy,
-        pty,
-        tryKeyboard: tryKeyboard !== undefined ? tryKeyboard : undefined,
-        transportMode: values["transport-mode"],
-        shellReadyTimeoutMs: values["shell-ready-timeout"],
-        commandTemplate,
-        commandWhitelist: whitelist
-          ? whitelist
+        const passphrase = values.passphrase || process.env.SSH_MCP_PASSPHRASE;
+        const whitelistPatterns = values.whitelist
+          ? values.whitelist
               .split(",")
-              .map((pattern) => pattern.trim())
+              .map((pattern: string) => pattern.trim())
               .filter(Boolean)
-          : undefined,
-        commandBlacklist: blacklist
-          ? blacklist
+          : undefined;
+        const blacklistPatterns = values.blacklist
+          ? values.blacklist
               .split(",")
-              .map((pattern) => pattern.trim())
+              .map((pattern: string) => pattern.trim())
               .filter(Boolean)
-          : undefined,
-        allowedLocalPaths: allowedLocalPaths
-          ? allowedLocalPaths
+          : undefined;
+        const allowedLocalPaths = values["allowed-local-paths"]
+          ? values["allowed-local-paths"]
               .split(",")
-              .map((allowedPath) => allowedPath.trim())
+              .map((allowedPath: string) => allowedPath.trim())
               .filter(Boolean)
-          : undefined,
-        allowedRemotePaths: allowedRemotePaths
-          ? allowedRemotePaths
+          : undefined;
+        const allowedRemotePaths = values["allowed-remote-paths"]
+          ? values["allowed-remote-paths"]
               .split(",")
-              .map((allowedPath) => allowedPath.trim())
+              .map((allowedPath: string) => allowedPath.trim())
               .filter(Boolean)
-          : undefined,
-      });
+          : undefined;
+        const sharedPolicy = {
+          password: values.password || positionals[3],
+          privateKey: values.privateKey,
+          agent: values.agent,
+          passphrase,
+          proxy: values.proxy,
+          socksProxy: values.socksProxy,
+          pty: this.parseBoolean(values.pty),
+          tryKeyboard:
+            values["try-keyboard"] !== undefined
+              ? values["try-keyboard"]
+              : undefined,
+          transportMode: values["transport-mode"],
+          shellReadyTimeoutMs: values["shell-ready-timeout"],
+          commandTemplate: values["command-template"],
+          commandWhitelist: whitelistPatterns,
+          commandBlacklist: blacklistPatterns,
+          allowedLocalPaths,
+          allowedRemotePaths,
+        };
+
+        const noAuth: string[] = [];
+        const defaultAgent = findDefaultAgent();
+        const defaultIdentity = findDefaultIdentityFile();
+
+        for (const hostAlias of hosts) {
+          // 每个值独立尝试 SSH config 合并（非认证字段始终合并；认证字段仅在无 CLI 认证参数时参与）
+          let sshConfigEntry = null;
+          try {
+            sshConfigEntry = lookupSshConfig(
+              hostAlias,
+              values["ssh-config-file"],
+            );
+          } catch (err) {
+            throw err;
+          }
+
+          const actualHost = sshConfigEntry?.hostName || hostAlias;
+          const portStr =
+            values.port || positionals[1] || sshConfigEntry?.port?.toString() || "22";
+          const port = parseInt(portStr, 10);
+          if (isNaN(port)) {
+            throw new Error("Port must be a valid number");
+          }
+          const username =
+            values.username || positionals[2] || sshConfigEntry?.user;
+
+          let effectivePrivateKey: string | undefined;
+          let resolvedAgent: string | undefined;
+          if (hasCliAuth) {
+            // 共享模式：CLI 认证参数覆盖一切，不读 config 的 IdentityFile
+            effectivePrivateKey = values.privateKey;
+            resolvedAgent = values.agent;
+          } else {
+            // 独立模式：config IdentityFile > 默认身份文件（仅别名命中时） > SSH agent
+            effectivePrivateKey =
+              sshConfigEntry?.identityFile ||
+              (sshConfigEntry ? defaultIdentity : undefined);
+            resolvedAgent = !effectivePrivateKey ? defaultAgent : undefined;
+          }
+
+          if (!actualHost || !username || (!sharedPolicy.password && !effectivePrivateKey && !resolvedAgent)) {
+            noAuth.push(hostAlias);
+            continue;
+          }
+
+          configMap[hostAlias] = this.normalizeConfig({
+            name: hostAlias,
+            host: actualHost,
+            port,
+            username,
+            ...sharedPolicy,
+            privateKey: effectivePrivateKey,
+            agent: resolvedAgent,
+          });
+        }
+
+        if (noAuth.length > 0) {
+          throw new Error(
+            `Missing required parameters for host(s): ${noAuth.join(", ")}. ` +
+              `Each host needs a username and an authentication source ` +
+              `(CLI --password/--privateKey/--agent, SSH config IdentityFile, ` +
+              `default identity files, or a running SSH agent).`
+          );
+        }
+      } else {
+        // ===== 单值：既有单主机行为，完全不变 =====
+        const host = hostRaw;
+
+        // 尝试从 SSH config 读取配置
+        let sshConfigEntry = null;
+        if (host) {
+          try {
+            sshConfigEntry = lookupSshConfig(host, values["ssh-config-file"]);
+          } catch (err) {
+            // 显式指定配置文件但读取失败时抛错
+            throw err;
+          }
+        }
+
+        const portStr = values.port || positionals[1] || sshConfigEntry?.port?.toString() || "22";
+        const username = values.username || positionals[2] || sshConfigEntry?.user;
+        const password = values.password || positionals[3];
+        // 私钥来源：命令行参数 > SSH config 的 IdentityFile
+        const privateKey =
+          values.privateKey || sshConfigEntry?.identityFile;
+        const passphrase = values.passphrase || process.env.SSH_MCP_PASSPHRASE;
+        const resolvedAgent = values.agent !== undefined
+          ? values.agent
+          : !password && !privateKey
+          ? findDefaultAgent()
+          : undefined;
+
+        // OpenSSH 风格回退：SSH config 命中了主机别名，但没有提供任何认证信息（无 IdentityFile / password / agent）时，模仿 ssh 客户端自动尝试 ~/.ssh 下的默认身份文件（id_rsa、id_ecdsa、id_ed25519 等）
+        const defaultPrivateKey =
+          !privateKey && !password && !resolvedAgent && sshConfigEntry
+            ? findDefaultIdentityFile()
+            : undefined;
+        const effectivePrivateKey = privateKey || defaultPrivateKey;
+        const whitelist = values.whitelist;
+        const blacklist = values.blacklist;
+        const allowedLocalPaths = values["allowed-local-paths"];
+        const allowedRemotePaths = values["allowed-remote-paths"];
+        const commandTemplate = values["command-template"];
+        const pty = this.parseBoolean(values.pty);
+        const tryKeyboard = values["try-keyboard"];
+
+        // 实际连接地址：优先使用 SSH config 的 HostName
+        const actualHost = sshConfigEntry?.hostName || host;
+
+        if (!actualHost || !portStr || !username || (!password && !effectivePrivateKey && !resolvedAgent)) {
+          throw new Error(
+            "Missing required parameters, need to provide host, port, username and password, private key or agent"
+          );
+        }
+
+        const port = parseInt(portStr, 10);
+        if (isNaN(port)) {
+          throw new Error("Port must be a valid number");
+        }
+
+        configMap["default"] = this.normalizeConfig({
+          name: "default",
+          host: actualHost,
+          port,
+          username,
+          password,
+          privateKey: effectivePrivateKey,
+          passphrase,
+          agent: resolvedAgent,
+          proxy: values.proxy,
+          socksProxy: values.socksProxy,
+          pty,
+          tryKeyboard: tryKeyboard !== undefined ? tryKeyboard : undefined,
+          transportMode: values["transport-mode"],
+          shellReadyTimeoutMs: values["shell-ready-timeout"],
+          commandTemplate,
+          commandWhitelist: whitelist
+            ? whitelist
+                .split(",")
+                .map((pattern) => pattern.trim())
+                .filter(Boolean)
+            : undefined,
+          commandBlacklist: blacklist
+            ? blacklist
+                .split(",")
+                .map((pattern) => pattern.trim())
+                .filter(Boolean)
+            : undefined,
+          allowedLocalPaths: allowedLocalPaths
+            ? allowedLocalPaths
+                .split(",")
+                .map((allowedPath) => allowedPath.trim())
+                .filter(Boolean)
+            : undefined,
+          allowedRemotePaths: allowedRemotePaths
+            ? allowedRemotePaths
+                .split(",")
+                .map((allowedPath) => allowedPath.trim())
+                .filter(Boolean)
+            : undefined,
+        });
+      }
     }
 
     return {
