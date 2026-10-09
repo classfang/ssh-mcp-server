@@ -564,6 +564,7 @@ The `execute-command` tool supports timeout options to prevent commands from han
 - Connections use SSH keepalives by default (`keepaliveIntervalMs`: 10000, `keepaliveCountMax`: 3) and respect `connectionTimeoutMs` for connection setup
 - SFTP open and transfer operations respect `sftpTimeoutMs` (default 300000ms)
 - Error responses include stable `code`, `message`, and `retriable` fields for easier agent-side handling
+- A command that ran but exited non-zero (e.g. `grep` with no match, `diff` with differences) is returned as its output followed by `[exit code] N`, not as a tool error and not wrapped in JSON. Real failures (timeout, connection, validation) still return `code`/`message`/`retriable` as described above
 
 This is particularly useful for commands like `ping`, `tail -f`, or other long-running processes that might block execution.
 

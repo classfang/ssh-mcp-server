@@ -570,6 +570,7 @@ npx @fangjunjie/ssh-mcp-server \
 - 连接默认启用 SSH keepalive（`keepaliveIntervalMs`: 10000，`keepaliveCountMax`: 3），并使用 `connectionTimeoutMs` 限制连接建立时间
 - SFTP 打开和传输操作使用 `sftpTimeoutMs` 控制超时（默认 300000ms）
 - 错误响应现在包含稳定的 `code`、`message`、`retriable` 字段，便于上层 Agent 处理
+- 命令正常执行但以非零退出码结束（如 `grep` 无匹配、`diff` 有差异）时，`execute-command` 直接返回命令输出并在末尾附上 `[exit code] N`，不再作为工具错误、也不再包成 JSON；超时、连接失败、校验失败等真正的错误仍按上一条返回 `code`/`message`/`retriable`
 
 这对于像 `ping`、`tail -f` 或其他可能阻塞执行的长时间运行进程特别有用。
 

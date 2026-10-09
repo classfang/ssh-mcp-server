@@ -1859,6 +1859,7 @@ export class SSHConnectionManager {
                         }`
                       : `Command failed with exit code ${exitCode}`),
                   false,
+                  true,
                 ),
               );
               return;
@@ -1880,29 +1881,33 @@ export class SSHConnectionManager {
           });
 
           commandTimeoutId = setTimeout(() => {
+            if (settled) {
+              return;
+            }
+            // Settle before touching the channel: a channel that emits "close"
+            // synchronously must not turn the timeout into an empty success.
+            settled = true;
+            const stdout = data.trimEnd();
+            const stderr = errorData.trimEnd();
+
             try {
               stream.close();
             } catch {
               // Ignore stream close errors during timeout handling.
             }
 
-            if (!settled) {
-              settled = true;
-              const stdout = data.trimEnd();
-              const stderr = errorData.trimEnd();
-              reject(
-                new ToolError(
-                  "COMMAND_TIMEOUT",
-                  [
-                    this.formatCommandFailure(stdout, stderr),
-                    `[timeout] Command timed out after ${timeout}ms`,
-                  ]
-                    .filter(Boolean)
-                    .join("\n"),
-                  true,
-                ),
-              );
-            }
+            reject(
+              new ToolError(
+                "COMMAND_TIMEOUT",
+                [
+                  this.formatCommandFailure(stdout, stderr),
+                  `[timeout] Command timed out after ${timeout}ms`,
+                ]
+                  .filter(Boolean)
+                  .join("\n"),
+                true,
+              ),
+            );
           }, timeout);
         },
       );
@@ -2256,6 +2261,7 @@ export class SSHConnectionManager {
               this.formatCommandFailure(output, "", matched.exitCode) ||
                 `Command failed with exit code ${matched.exitCode}`,
               false,
+              true,
             ),
           );
           return;
