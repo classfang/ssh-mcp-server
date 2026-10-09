@@ -8,6 +8,15 @@ import {
 import { Logger } from "../utils/logger.js";
 import { collectSystemStatus } from "../utils/status-collector.js";
 import { ToolError } from "../utils/tool-error.js";
+import { shellQuote } from "../utils/shell.js";
+import {
+  assertValidJobId,
+  buildJobKillScript,
+  buildJobListScript,
+  buildJobStartScript,
+  buildJobStatusScript,
+  generateJobId,
+} from "../utils/remote-jobs.js";
 import fs from "fs";
 import path from "path";
 import {
@@ -76,6 +85,7 @@ const COMMAND_TEMPLATE_PLACEHOLDER = "<command>";
 const QUOTED_COMMAND_TEMPLATE_PLACEHOLDER = "<quotedCommand>";
 const DEFAULT_CONNECTION_TIMEOUT_MS = 30000;
 const DEFAULT_COMMAND_TIMEOUT_MS = 30000;
+const DEFAULT_JOB_OUTPUT_BYTES = 64 * 1024;
 const DEFAULT_KEEPALIVE_INTERVAL_MS = 10000;
 const DEFAULT_KEEPALIVE_COUNT_MAX = 3;
 const DEFAULT_SFTP_TIMEOUT_MS = 300000;
@@ -112,10 +122,6 @@ function applyCommandTemplate(template: string, command: string): string {
     .join(quotedCommand)
     .split(COMMAND_TEMPLATE_PLACEHOLDER)
     .join(command);
-}
-
-function shellQuote(value: string): string {
-  return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
 /**
@@ -1996,6 +2002,77 @@ export class SSHConnectionManager {
     }
 
     return [stdout, `[stderr]\n${stderr}`].filter(Boolean).join("\n");
+  }
+
+  /**
+   * Start a command detached on the remote host. The user's command goes
+   * through the connection's whitelist/blacklist exactly like execute-command;
+   * only the fixed wrapper script is exempt.
+   */
+  public async jobStart(
+    cmdString: string,
+    directory?: string,
+    name?: string,
+  ): Promise<{ jobId: string; message: string }> {
+    const validation = this.validateCommand(cmdString, name);
+    if (!validation.isAllowed) {
+      throw new ToolError(
+        "COMMAND_VALIDATION_FAILED",
+        `Command validation failed: ${validation.reason}`,
+        false,
+      );
+    }
+    const jobId = generateJobId();
+    const message = await this.runJobScript(
+      buildJobStartScript(jobId, cmdString, directory),
+      name,
+    );
+    return { jobId, message };
+  }
+
+  public async jobStatus(
+    jobId: string,
+    options: { offset?: number; tailBytes?: number; maxBytes?: number },
+    name?: string,
+  ): Promise<string> {
+    this.assertJobId(jobId);
+    const maxBytes = options.maxBytes ?? DEFAULT_JOB_OUTPUT_BYTES;
+    return this.runJobScript(
+      buildJobStatusScript(jobId, {
+        offset: options.offset,
+        tailBytes: options.tailBytes ?? 8192,
+        maxBytes,
+      }),
+      name,
+    );
+  }
+
+  public async jobKill(jobId: string, name?: string): Promise<string> {
+    this.assertJobId(jobId);
+    return this.runJobScript(buildJobKillScript(jobId), name, 30000);
+  }
+
+  public async jobList(limit: number, name?: string): Promise<string> {
+    return this.runJobScript(buildJobListScript(limit), name);
+  }
+
+  private assertJobId(jobId: string): void {
+    try {
+      assertValidJobId(jobId);
+    } catch (error) {
+      throw new ToolError("UNKNOWN_ERROR", (error as Error).message, false);
+    }
+  }
+
+  private runJobScript(
+    script: string,
+    name?: string,
+    timeout: number = 20000,
+  ): Promise<string> {
+    return this.runCommandInternal(script, undefined, name, {
+      timeout,
+      prevalidatedInternalCommand: true,
+    });
   }
 
   private async runCommandInternal(
