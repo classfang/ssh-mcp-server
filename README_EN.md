@@ -43,8 +43,10 @@ NPM: [https://www.npmjs.com/package/@fangjunjie/ssh-mcp-server](https://www.npmj
 | Tool | Name | Description |
 |---------|-----------|----------|
 | execute-command | Command Execution Tool | Execute SSH commands on remote servers and get results |
-| upload | File Upload Tool | Upload local files to specified locations on remote servers |
-| download | File Download Tool | Download files from remote servers to local specified locations |
+| upload | File Upload Tool | Upload local files or whole directories to specified locations on remote servers |
+| download | File Download Tool | Download files or whole directories from remote servers to local specified locations |
+| read-file | File Read Tool | Read a remote text file over SFTP, pageable by byte offset; refuses binary files |
+| write-file | File Write Tool | Write text content to a remote file over SFTP (overwrite or append), bypassing shell quoting |
 | list-servers | List Servers Tool | List all available SSH server configurations |
 
 ## 📚 Usage
@@ -567,6 +569,13 @@ The `execute-command` tool supports timeout options to prevent commands from han
 - A command that ran but exited non-zero (e.g. `grep` with no match, `diff` with differences) is returned as its output followed by `[exit code] N`, not as a tool error and not wrapped in JSON. Real failures (timeout, connection, validation) still return `code`/`message`/`retriable` as described above
 
 This is particularly useful for commands like `ping`, `tail -f`, or other long-running processes that might block execution.
+
+### 📄 File Read/Write and Directory Transfer
+
+- `read-file` reads one byte range of a remote text file (`offset`/`length`, at most 65536 bytes by default). The result starts with a `[bytes] start-end of total` header and names the `next offset` when more remains, so large files can be paged. Binary content (NUL bytes or a large share of invalid UTF-8) is refused with a hint to use `download`
+- `write-file` writes text straight to a remote file (`append: true` appends, `mode` sets the permission bits of a newly created file). The content never passes through a shell, so quotes, `$`, backticks and multi-line text need no escaping
+- `upload` / `download` transfer a directory recursively when the path is a directory: the remote directory is created if missing, symlinks and other non-regular entries are skipped, and at most 2000 files are transferred per call (archive larger trees first). Files are transferred one by one with the same path checks as a single file
+- All of these use SFTP, respect `allowedLocalPaths` / `allowedRemotePaths`, and are unavailable in `shell` mode
 
 ### 📦 Command Output Limit
 

@@ -15,6 +15,7 @@ import {
   normalizeRemotePath,
 } from "../utils/remote-path.js";
 import type { Duplex } from "node:stream";
+import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { StringDecoder } from "node:string_decoder";
 
@@ -79,6 +80,8 @@ const DEFAULT_KEEPALIVE_INTERVAL_MS = 10000;
 const DEFAULT_KEEPALIVE_COUNT_MAX = 3;
 const DEFAULT_SFTP_TIMEOUT_MS = 300000;
 const DEFAULT_MAX_OUTPUT_BYTES = 10 * 1024 * 1024;
+const DEFAULT_READ_FILE_BYTES = 64 * 1024;
+const MAX_DIRECTORY_TRANSFER_FILES = 2000;
 
 // ssh2's SFTP ReadStream/WriteStream keep a single request in flight, so
 // transfer throughput is capped at one chunk per round trip regardless of the
@@ -113,6 +116,26 @@ function applyCommandTemplate(template: string, command: string): string {
 
 function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
+/**
+ * Heuristic used by read-file: NUL bytes, or a noticeable share of invalid
+ * UTF-8. A page cut may split a multi-byte character at either end, so up to
+ * three replacement characters at each edge are forgiven.
+ */
+function looksBinary(buffer: Buffer): boolean {
+  if (buffer.includes(0)) {
+    return true;
+  }
+  const text = buffer
+    .toString("utf8")
+    .replace(/^\uFFFD{1,3}/, "")
+    .replace(/\uFFFD{1,3}$/, "");
+  if (text.length === 0) {
+    return false;
+  }
+  const invalid = text.split("\uFFFD").length - 1;
+  return invalid / text.length > 0.05;
 }
 
 /**
@@ -618,6 +641,14 @@ export class SSHConnectionManager {
 
     const validatedLocalPath = this.validateLocalPath(localPath, name, "read");
     const validatedRemotePath = this.validateRemotePath(remotePath, name);
+
+    const localStats = await fs.promises
+      .stat(validatedLocalPath)
+      .catch(() => undefined);
+    if (localStats?.isDirectory()) {
+      return this.uploadDirectory(validatedLocalPath, validatedRemotePath, name);
+    }
+
     const client = await this.ensureConnected(name);
     const sftpTimeoutMs = this.getSftpTimeoutMs(config);
     const sftp = await this.withTimeout(
@@ -720,6 +751,18 @@ export class SSHConnectionManager {
       .slice(2)}`;
 
     try {
+      const remoteStats = await this.statRemote(sftp, validatedRemotePath).catch(
+        () => undefined,
+      );
+      if (remoteStats?.isDirectory()) {
+        return await this.downloadDirectory(
+          sftp,
+          validatedRemotePath,
+          validatedLocalPath,
+          name,
+        );
+      }
+
       const remoteSize = await this.getRemoteSizeForFastTransfer(
         sftp,
         validatedRemotePath,
@@ -788,6 +831,327 @@ export class SSHConnectionManager {
     } finally {
       this.closeSftp(sftp);
     }
+  }
+
+  private assertSftpAllowed(config: SSHConfig): void {
+    if (this.getTransportMode(config) === "shell") {
+      throw new ToolError(
+        "UNSUPPORTED_IN_SHELL_MODE",
+        "Current bastion shell mode does not support SFTP upload/download.",
+        false,
+      );
+    }
+  }
+
+  private async openSftpFor(name?: string): Promise<{
+    sftp: SFTPWrapper;
+    key: string;
+    timeoutMs: number;
+  }> {
+    const config = this.getConfig(name);
+    this.assertSftpAllowed(config);
+    const key = name || this.defaultName;
+    const client = await this.ensureConnected(name);
+    const timeoutMs = this.getSftpTimeoutMs(config);
+    const sftp = await this.withTimeout(
+      this.openSftp(client),
+      timeoutMs,
+      () => this.invalidateConnection(key),
+      `SFTP open timed out after ${timeoutMs}ms`,
+    );
+    return { sftp, key, timeoutMs };
+  }
+
+  /**
+   * Read a slice of a remote text file over SFTP. Refuses binary content
+   * (NUL bytes) instead of dumping it into the conversation.
+   */
+  public async readFile(
+    remotePath: string,
+    options: { offset?: number; length?: number } = {},
+    name?: string,
+  ): Promise<string> {
+    const validatedRemotePath = this.validateRemotePath(remotePath, name);
+    const { sftp, key, timeoutMs } = await this.openSftpFor(name);
+    const offset = options.offset ?? 0;
+    const length = options.length ?? DEFAULT_READ_FILE_BYTES;
+
+    try {
+      const stats = await this.withTimeout(
+        this.statRemote(sftp, validatedRemotePath),
+        timeoutMs,
+        () => this.invalidateConnection(key),
+        `SFTP stat timed out after ${timeoutMs}ms`,
+      );
+      if (stats.isDirectory()) {
+        throw new ToolError(
+          "SFTP_ERROR",
+          `${validatedRemotePath} is a directory; use execute-command with ls to list it.`,
+          false,
+        );
+      }
+
+      const total = stats.size;
+      const start = Math.min(offset, total);
+      const end = Math.min(total, start + length);
+      const chunks: Buffer[] = [];
+      if (end > start) {
+        await this.withTimeout(
+          pipeline(
+            sftp.createReadStream(validatedRemotePath, {
+              start,
+              end: end - 1,
+            }),
+            async function (source: AsyncIterable<Buffer>) {
+              for await (const chunk of source) {
+                chunks.push(chunk);
+              }
+            },
+          ),
+          timeoutMs,
+          () => this.invalidateConnection(key),
+          `SFTP read timed out after ${timeoutMs}ms`,
+        );
+      }
+
+      const buffer = Buffer.concat(chunks);
+      if (looksBinary(buffer)) {
+        throw new ToolError(
+          "SFTP_ERROR",
+          `${validatedRemotePath} looks like a binary file; use download instead.`,
+          false,
+        );
+      }
+
+      const header = `[file] ${validatedRemotePath}\n[bytes] ${start}-${end} of ${total}${
+        end < total ? ` (next offset ${end})` : " (end of file)"
+      }\n---\n`;
+      return header + buffer.toString("utf8");
+    } catch (error) {
+      if (error instanceof ToolError) {
+        throw error;
+      }
+      throw new ToolError(
+        "SFTP_ERROR",
+        `File read failed: ${(error as Error).message}`,
+        true,
+      );
+    } finally {
+      this.closeSftp(sftp);
+    }
+  }
+
+  /**
+   * Write text content to a remote file over SFTP, so multi-line content and
+   * quotes never pass through shell quoting.
+   */
+  public async writeFile(
+    remotePath: string,
+    content: string,
+    options: { append?: boolean; mode?: number } = {},
+    name?: string,
+  ): Promise<string> {
+    const validatedRemotePath = this.validateRemotePath(remotePath, name);
+    const { sftp, key, timeoutMs } = await this.openSftpFor(name);
+    const data = Buffer.from(content, "utf8");
+
+    try {
+      await this.withTimeout(
+        pipeline(
+          Readable.from([data]),
+          sftp.createWriteStream(validatedRemotePath, {
+            flags: options.append ? "a" : "w",
+            ...(options.mode !== undefined ? { mode: options.mode } : {}),
+          }),
+        ),
+        timeoutMs,
+        () => this.invalidateConnection(key),
+        `SFTP write timed out after ${timeoutMs}ms`,
+      );
+      return `${options.append ? "Appended" : "Wrote"} ${data.length} bytes to ${validatedRemotePath}`;
+    } catch (error) {
+      if (error instanceof ToolError) {
+        throw error;
+      }
+      throw new ToolError(
+        "SFTP_ERROR",
+        `File write failed: ${(error as Error).message}`,
+        true,
+      );
+    } finally {
+      this.closeSftp(sftp);
+    }
+  }
+
+  private mkdirRemote(sftp: SFTPWrapper, remoteDir: string): Promise<void> {
+    return new Promise<void>((resolve, reject) => {
+      sftp.mkdir(remoteDir, (err) => {
+        if (!err) {
+          resolve();
+          return;
+        }
+        // Most servers only report a generic failure when the directory
+        // already exists, so check before deciding it is a real error.
+        sftp.stat(remoteDir, (statErr, stats) =>
+          !statErr && stats.isDirectory() ? resolve() : reject(err),
+        );
+      });
+    });
+  }
+
+  private readdirRemote(
+    sftp: SFTPWrapper,
+    remoteDir: string,
+  ): Promise<Array<{ filename: string; attrs: Stats }>> {
+    return new Promise((resolve, reject) => {
+      sftp.readdir(remoteDir, (err, list) =>
+        err ? reject(err) : resolve(list),
+      );
+    });
+  }
+
+  /**
+   * Upload a local directory tree file by file, reusing the single-file path
+   * (path validation, fast transfer, timeouts). Symlinks are skipped.
+   */
+  private async uploadDirectory(
+    localDir: string,
+    remoteDir: string,
+    name?: string,
+  ): Promise<string> {
+    const files: Array<{ local: string; remote: string }> = [];
+    const dirs: string[] = [remoteDir];
+    let skipped = 0;
+
+    const walk = async (local: string, remote: string): Promise<void> => {
+      for (const entry of await fs.promises.readdir(local, {
+        withFileTypes: true,
+      })) {
+        const localChild = path.join(local, entry.name);
+        const remoteChild = path.posix.join(remote, entry.name);
+        if (entry.isDirectory()) {
+          dirs.push(remoteChild);
+          await walk(localChild, remoteChild);
+        } else if (entry.isFile()) {
+          files.push({ local: localChild, remote: remoteChild });
+        } else {
+          skipped++;
+        }
+        if (files.length > MAX_DIRECTORY_TRANSFER_FILES) {
+          throw new ToolError(
+            "SFTP_ERROR",
+            `Directory has more than ${MAX_DIRECTORY_TRANSFER_FILES} files; archive it (tar) and upload the archive instead.`,
+            false,
+          );
+        }
+      }
+    };
+    await walk(localDir, remoteDir);
+
+    const { sftp, key, timeoutMs } = await this.openSftpFor(name);
+    try {
+      for (const dir of dirs) {
+        await this.withTimeout(
+          this.mkdirRemote(sftp, dir),
+          timeoutMs,
+          () => this.invalidateConnection(key),
+          `SFTP mkdir timed out after ${timeoutMs}ms`,
+        );
+      }
+    } catch (error) {
+      if (error instanceof ToolError) {
+        throw error;
+      }
+      throw new ToolError(
+        "SFTP_ERROR",
+        `Creating remote directory failed: ${(error as Error).message}`,
+        true,
+      );
+    } finally {
+      this.closeSftp(sftp);
+    }
+
+    for (const file of files) {
+      try {
+        await this.upload(file.local, file.remote, name);
+      } catch (error) {
+        throw new ToolError(
+          (error as ToolError).code ?? "SFTP_ERROR",
+          `Uploaded ${files.indexOf(file)} of ${files.length} files before failing on ${file.local}: ${(error as Error).message}`,
+          (error as ToolError).retriable ?? true,
+        );
+      }
+    }
+    return `Directory uploaded: ${files.length} files to ${remoteDir}${
+      skipped ? ` (${skipped} non-regular entries such as symlinks skipped)` : ""
+    }`;
+  }
+
+  /**
+   * Download a remote directory tree file by file, reusing the single-file
+   * path. `sftp` is the caller's already open session, used only for listing.
+   */
+  private async downloadDirectory(
+    sftp: SFTPWrapper,
+    remoteDir: string,
+    localDir: string,
+    name?: string,
+  ): Promise<string> {
+    const files: Array<{ remote: string; local: string }> = [];
+    const localDirs: string[] = [localDir];
+    let skipped = 0;
+    const key = name || this.defaultName;
+    const timeoutMs = this.getSftpTimeoutMs(this.getConfig(name));
+
+    const walk = async (remote: string, local: string): Promise<void> => {
+      const entries = await this.withTimeout(
+        this.readdirRemote(sftp, remote),
+        timeoutMs,
+        () => this.invalidateConnection(key),
+        `SFTP readdir timed out after ${timeoutMs}ms`,
+      );
+      for (const { filename, attrs } of entries) {
+        if (filename === "." || filename === "..") {
+          continue;
+        }
+        const remoteChild = path.posix.join(remote, filename);
+        const localChild = path.join(local, filename);
+        if (attrs.isDirectory()) {
+          localDirs.push(localChild);
+          await walk(remoteChild, localChild);
+        } else if (attrs.isFile()) {
+          files.push({ remote: remoteChild, local: localChild });
+        } else {
+          skipped++;
+        }
+        if (files.length > MAX_DIRECTORY_TRANSFER_FILES) {
+          throw new ToolError(
+            "SFTP_ERROR",
+            `Directory has more than ${MAX_DIRECTORY_TRANSFER_FILES} files; archive it (tar) on the server and download the archive instead.`,
+            false,
+          );
+        }
+      }
+    };
+    await walk(remoteDir, localDir);
+
+    for (const dir of localDirs) {
+      await fs.promises.mkdir(dir, { recursive: true });
+    }
+    for (const file of files) {
+      try {
+        await this.download(file.remote, file.local, name);
+      } catch (error) {
+        throw new ToolError(
+          (error as ToolError).code ?? "SFTP_ERROR",
+          `Downloaded ${files.indexOf(file)} of ${files.length} files before failing on ${file.remote}: ${(error as Error).message}`,
+          (error as ToolError).retriable ?? true,
+        );
+      }
+    }
+    return `Directory downloaded: ${files.length} files to ${localDir}${
+      skipped ? ` (${skipped} non-regular entries such as symlinks skipped)` : ""
+    }`;
   }
 
   private openSftp(client: Client): Promise<SFTPWrapper> {

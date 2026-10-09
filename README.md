@@ -47,8 +47,10 @@ NPM: [https://www.npmjs.com/package/@fangjunjie/ssh-mcp-server](https://www.npmj
 | 工具 | 名称 | 描述 |
 |---------|-----------|----------|
 | execute-command | 命令执行工具 | 在远程服务器上执行 SSH 命令并获取执行结果 |
-| upload | 文件上传工具 | 将本地文件上传到远程服务器指定位置 |
-| download | 文件下载工具 | 从远程服务器下载文件到本地指定位置 |
+| upload | 文件上传工具 | 将本地文件或整个目录上传到远程服务器指定位置 |
+| download | 文件下载工具 | 从远程服务器下载文件或整个目录到本地指定位置 |
+| read-file | 读文件工具 | 通过 SFTP 读取远程文本文件，可按字节偏移分页，拒绝二进制文件 |
+| write-file | 写文件工具 | 通过 SFTP 直接写入文本内容（覆盖或追加），不经过 shell 引号转义 |
 | list-servers | 服务器列表工具 | 列出所有可用SSH服务器配置 |
 
 ## 📚 使用方法
@@ -573,6 +575,13 @@ npx @fangjunjie/ssh-mcp-server \
 - 命令正常执行但以非零退出码结束（如 `grep` 无匹配、`diff` 有差异）时，`execute-command` 直接返回命令输出并在末尾附上 `[exit code] N`，不再作为工具错误、也不再包成 JSON；超时、连接失败、校验失败等真正的错误仍按上一条返回 `code`/`message`/`retriable`
 
 这对于像 `ping`、`tail -f` 或其他可能阻塞执行的长时间运行进程特别有用。
+
+### 📄 文件读写与目录传输
+
+- `read-file`：读取远程文本文件的一个字节范围（`offset`/`length`，默认最多 65536 字节）。返回内容前有 `[bytes] 起-止 of 总大小` 头部，未读完时给出 `next offset`，便于分页。检测到二进制内容（NUL 字节或大量无效 UTF-8）时拒绝并提示改用 `download`
+- `write-file`：直接把文本内容写入远程文件（`append: true` 追加，`mode` 指定新建文件权限）。内容不经过 shell，因此引号、`$`、反引号、多行内容都不需要转义
+- `upload` / `download` 的路径是目录时会递归传输：远端目录不存在则创建，符号链接等非普通文件会跳过，单次最多 2000 个文件（更大的目录请先打包）。文件逐个传输，路径校验与单文件相同
+- 以上均使用 SFTP，受 `allowedLocalPaths` / `allowedRemotePaths` 限制，`shell` 模式下不可用
 
 ### 📦 命令输出限制
 

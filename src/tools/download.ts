@@ -13,7 +13,7 @@ export function registerDownloadTool(server: McpServer): void {
   server.registerTool(
     "download",
     {
-      description: "Download file from connected server",
+      description: "Download a file, or a whole remote directory (recursively; symlinks skipped, max 2000 files), from connected server",
       inputSchema: {
         remotePath: z.string().describe("Remote path (POSIX absolute like /home/user/file.txt, or Windows drive-absolute like C:/Users/file.txt)"),
         localPath: z.string().describe("Local path"),
