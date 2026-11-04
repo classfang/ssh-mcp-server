@@ -359,8 +359,71 @@ export class SSHConnectionManager {
     }
 
     const config = this.getConfig(key);
+    const connectionPromise = this.connectWithKeyFallbacks(key, config);
+
+    this.pendingConnections.set(key, connectionPromise);
+
+    try {
+      await connectionPromise;
+    } finally {
+      this.pendingConnections.delete(key);
+    }
+  }
+
+  /**
+   * OpenSSH 风格的默认身份文件回退：主私钥被服务器拒绝认证时，依次换用 config.privateKeyFallbacks 中的后续密钥重建连接。只有"自动启用 ~/.ssh 默认身份文件"的场景会带回退链，显式指定的认证方式保持单次尝试；网络不通、握手超时等非认证失败不触发重试。
+   */
+  private async connectWithKeyFallbacks(
+    key: string,
+    config: SSHConfig,
+  ): Promise<void> {
+    const candidates = config.privateKeyFallbacks?.length
+      ? [config.privateKey, ...config.privateKeyFallbacks]
+      : [config.privateKey];
+
+    let lastError: unknown;
+    for (let i = 0; i < candidates.length; i++) {
+      const attemptConfig =
+        candidates[i] === config.privateKey
+          ? config
+          : { ...config, privateKey: candidates[i] };
+      try {
+        await this.connectOnce(key, attemptConfig);
+        return;
+      } catch (error) {
+        lastError = error;
+        if (
+          i === candidates.length - 1 ||
+          !this.isAuthenticationFailure(error)
+        ) {
+          throw error;
+        }
+        Logger.log(
+          `Authentication with default identity file rejected for [${key}], trying the next default identity file`,
+          "info",
+        );
+      }
+    }
+    throw lastError;
+  }
+
+  /**
+   * 判断连接失败是否属于"服务器拒绝认证凭据"：ssh2 对公钥被拒统一抛出 All configured authentication methods failed，
+   * 个别服务器直接回 Authentication failure。只有认证被拒才值得换下一把默认身份文件重试，其余失败重试没有意义。
+   */
+  private isAuthenticationFailure(error: unknown): boolean {
+    const message = error instanceof Error ? error.message : String(error);
+    return /authentication (?:methods failed|failure)|no matching authentication/i.test(
+      message,
+    );
+  }
+
+  /**
+   * 用给定配置发起一次连接尝试（含就绪后的会话初始化），失败时抛出。
+   */
+  private async connectOnce(key: string, config: SSHConfig): Promise<void> {
     const client = this.createClient();
-    const connectionPromise = new Promise<void>(async (resolve, reject) => {
+    await new Promise<void>(async (resolve, reject) => {
       let settled = false;
       const timeoutMs = this.getConnectionTimeoutMs(config);
       const timeoutId = setTimeout(() => {
@@ -463,14 +526,6 @@ export class SSHConnectionManager {
         rejectOnce(error);
       }
     });
-
-    this.pendingConnections.set(key, connectionPromise);
-
-    try {
-      await connectionPromise;
-    } finally {
-      this.pendingConnections.delete(key);
-    }
   }
 
   /**

@@ -10,6 +10,7 @@ export interface SSHConfig {
   username: string;
   password?: string;
   privateKey?: string;
+  privateKeyFallbacks?: string[]; // OpenSSH 风格默认身份文件回退链：privateKey 被服务器拒绝认证时依次换用后续密钥重试（仅在自动启用 ~/.ssh 默认身份文件时填充）
   passphrase?: string;
   agent?: string; // SSH agent for authentication (use 'pageant' for Windows Pageant)
   tryKeyboard?: boolean; // Enable keyboard-interactive authentication. Password prompts use `password`; non-password prompts (e.g. OTP) use the SSH_MCP_2FA_CODE env var. Default: false
