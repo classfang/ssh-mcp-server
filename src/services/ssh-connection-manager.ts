@@ -366,7 +366,10 @@ export class SSHConnectionManager {
     try {
       await connectionPromise;
     } finally {
-      this.pendingConnections.delete(key);
+      // 只清理本次流程，避免旧流程结束时删除后来建立的连接任务。
+      if (this.pendingConnections.get(key) === connectionPromise) {
+        this.pendingConnections.delete(key);
+      }
     }
   }
 
@@ -497,6 +500,10 @@ export class SSHConnectionManager {
       });
 
       client.on("error", (err: Error) => {
+        // 失败尝试的迟到事件不能修改后续换钥尝试的状态。
+        if (settled && this.clients.get(key) !== client) {
+          return;
+        }
         this.connected.set(key, false);
         if (this.clients.get(key) === client || this.shellStreams.has(key)) {
           this.invalidateConnection(key);
@@ -511,7 +518,9 @@ export class SSHConnectionManager {
       });
 
       client.on("close", () => {
-        this.clearConnectionState(key);
+        if (!settled || this.clients.get(key) === client) {
+          this.clearConnectionState(key);
+        }
         Logger.log(`SSH connection [${key}] closed`, "info");
       });
 
@@ -3052,7 +3061,7 @@ export class SSHConnectionManager {
     this.cleanupShellState(key);
     this.connected.set(key, false);
     this.clients.delete(key);
-    this.pendingConnections.delete(key);
+    // pendingConnections 由 connect 的外层流程管理，单把密钥失败不结束整个重试。
   }
 
   private invalidateConnection(key: string): void {

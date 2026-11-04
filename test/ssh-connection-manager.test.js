@@ -288,6 +288,78 @@ describe('SSH Connection Manager', () => {
     manager.scheduleStatusCollection = originalScheduleStatusCollection;
   });
 
+  describe('默认私钥回退的连接生命周期', () => {
+    function setupFallbackClients(firstError = 'All configured authentication methods failed') {
+      const clients = [];
+      let notifyFallback;
+      const fallbackStarted = new Promise((resolve) => { notifyFallback = resolve; });
+      const privateKey = path.join(process.cwd(), 'node_modules/ssh2/test/fixtures/id_rsa');
+      manager.setConfig({
+        fallback: {
+          name: 'fallback', host: 'example.test', port: 22, username: 'test',
+          privateKey,
+          privateKeyFallbacks: [path.join(process.cwd(), 'node_modules/ssh2/test/fixtures/id_ecdsa')],
+        },
+      });
+      manager.scheduleStatusCollection = () => {};
+      manager.createClient = () => {
+        const attempt = clients.length;
+        const client = new FakeClient({
+          onConnect: () => {
+            if (attempt === 0) {
+              queueMicrotask(() => client.emit('error', new Error(firstError)));
+            } else {
+              notifyFallback();
+            }
+          },
+        });
+        clients.push(client);
+        return client;
+      };
+      return { clients, fallbackStarted };
+    }
+
+    it('旧连接关闭后，并发请求仍共享同一次换钥过程', async () => {
+      const { clients, fallbackStarted } = setupFallbackClients();
+      const initial = manager.connect('fallback');
+      await fallbackStarted;
+      clients[0].emit('close');
+      const concurrent = manager.connect('fallback');
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.strictEqual(clients.length, 2);
+      clients[1].emit('ready');
+      await Promise.all([initial, concurrent]);
+      assert.strictEqual(manager.getClient('fallback'), clients[1]);
+      assert.strictEqual(manager.pendingConnections.size, 0);
+    });
+
+    it('旧连接迟到的关闭和错误事件不影响已成功的回退连接', async () => {
+      const { clients, fallbackStarted } = setupFallbackClients();
+      const connecting = manager.connect('fallback');
+      await fallbackStarted;
+      clients[1].emit('ready');
+      await connecting;
+      clients[0].emit('close');
+      clients[0].emit('error', new Error('迟到的旧连接错误'));
+      assert.strictEqual(manager.getClient('fallback'), clients[1]);
+      assert.strictEqual(manager.getAllServerInfos()[0].connected, true);
+      await manager.connect('fallback');
+      assert.strictEqual(clients.length, 2);
+
+      // 当前连接正常关闭时，仍须清理它自己的状态。
+      clients[1].emit('close');
+      assert.strictEqual(manager.getAllServerInfos()[0].connected, false);
+      assert.throws(() => manager.getClient('fallback'), /not connected/);
+    });
+
+    it('网络错误不触发换钥，并释放共享连接任务', async () => {
+      const { clients } = setupFallbackClients('connect ECONNREFUSED');
+      await assert.rejects(manager.connect('fallback'), /ECONNREFUSED/);
+      assert.strictEqual(clients.length, 1);
+      assert.strictEqual(manager.pendingConnections.size, 0);
+    });
+  });
+
   describe('配置管理', () => {
     it('应该正确初始化并设置配置', () => {
       const configs = {
