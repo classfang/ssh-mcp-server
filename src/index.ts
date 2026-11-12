@@ -3,11 +3,13 @@
 import { SshMcpServer } from "./core/mcp-server.js";
 import { SERVER_CONFIG } from "./config/server.js";
 import { Logger } from "./utils/logger.js";
+import { runConfigCli } from "./cli/config-cli.js";
 
 const HELP_TEXT = `Usage: ssh-mcp-server [options] [host port username password]
 
 Options:
-  --config-file <path>             Load SSH server configs from a JSON file
+  --config-file <path>             Load SSH server configs from a JSON file (plaintext JSON) or an encrypted store
+  --config-key <keyfile|literal>   Key for an encrypted --config-file; falls back to SSH_MCP_CONFIG_KEY, then ~/.ssh-mcp-server.key
   --ssh-config-file <path>         Read host aliases from SSH config (default: ~/.ssh/config)
   --ssh <config>                   Add an SSH config as JSON or legacy key=value pairs (repeatable)
   -h, --host <hosts>               SSH host(s), comma-separated; aliases resolve from SSH config
@@ -35,7 +37,12 @@ Options:
   --http-path <path>              Endpoint path for HTTP transport (default: /mcp)
   --http-token <token>            Bearer token for HTTP; falls back to SSH_MCP_HTTP_TOKEN
   --version, -v                   Print package version
-  --help                          Print this help message`;
+  --help                          Print this help message
+
+Commands:
+  config <init|add|remove|list|export|import>
+                                  Manage the encrypted connection store
+                                  ('ssh-mcp-server config' for details)`;
 
 function hasArg(...names: string[]): boolean {
   return process.argv.slice(2).some((arg) => names.includes(arg));
@@ -52,6 +59,11 @@ async function main(): Promise<void> {
 
   if (hasArg("--version", "-v")) {
     console.log(SERVER_CONFIG.version);
+    return;
+  }
+
+  if (process.argv[2] === "config") {
+    await runConfigCli(process.argv.slice(3));
     return;
   }
 
