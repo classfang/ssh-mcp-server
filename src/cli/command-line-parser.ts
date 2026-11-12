@@ -5,6 +5,7 @@ import path from "path";
 import os from "os";
 import { lookupSshConfig } from "../utils/ssh-config-parser.js";
 import { normalizeRemotePath as normalizeAbsoluteRemotePath } from "../utils/remote-path.js";
+import { decryptJson, isEncryptedBuffer, resolveKeyMaterial } from "../utils/config-crypto.js";
 
 /**
  * Command line argument parser class
@@ -155,6 +156,7 @@ export class CommandLineParser {
       args: process.argv.slice(2),
       options: {
         "config-file": { type: "string" },
+        "config-key": { type: "string" },
         "ssh-config-file": { type: "string" },
         ssh: { type: "string", multiple: true },
         // Compatible with single connection legacy parameters
@@ -195,7 +197,13 @@ export class CommandLineParser {
         throw new Error(`Config file not found: ${configFilePath}`);
       }
       try {
-        const configContent = fs.readFileSync(configFilePath, "utf-8");
+        const rawContent = fs.readFileSync(configFilePath);
+        // 加密存储格式按 magic header 自动识别,密钥来源 --config-key > SSH_MCP_CONFIG_KEY > ~/.ssh-mcp-server.key
+        const configContent = isEncryptedBuffer(rawContent)
+          ? JSON.stringify(
+              decryptJson<unknown>(rawContent, resolveKeyMaterial(values["config-key"]))
+            )
+          : rawContent.toString("utf-8");
         const fileConfig = JSON.parse(configContent);
         
         // Support both array format and object format

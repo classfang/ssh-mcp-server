@@ -565,6 +565,32 @@ npx @fangjunjie/ssh-mcp-server \
 }
 ```
 
+### 11. 🔐 加密配置存储（`config` 子命令）
+
+连接配置（含密码、私钥口令）可以保存在加密存储文件中，磁盘上始终是 AES-256-GCM 密文，`cat` 或直接复制文件都读不到内容；明文只在内存与显式 `export` 的输出中出现。
+
+```bash
+# 创建空的加密存储(同时生成密钥文件,默认在 ~/.ssh-mcp-server.key)
+ssh-mcp-server config init --file ~/.ssh-mcp-server.enc
+
+# 新增连接(省略 --password 时交互输入;--force 覆盖同名)
+ssh-mcp-server config add --file ~/.ssh-mcp-server.enc --name prod --host 10.0.0.5 --username root --password '...'
+
+# 列出连接(默认脱敏,--show-secrets 显示明文凭据)
+ssh-mcp-server config list --file ~/.ssh-mcp-server.enc
+ssh-mcp-server config remove --file ~/.ssh-mcp-server.enc prod
+
+# 与明文 JSON 双向迁移(accepts 数组或对象格式)
+ssh-mcp-server config import --in ssh-config.json --file ~/.ssh-mcp-server.enc
+ssh-mcp-server config export --file ~/.ssh-mcp-server.enc --out backup.json
+```
+
+启动服务时 `--config-file` 直接指向加密存储即可，密文格式按文件头自动识别；密钥来源优先级为 `--config-key <keyfile|literal>` > 环境变量 `SSH_MCP_CONFIG_KEY` > 默认密钥文件 `~/.ssh-mcp-server.key`。密钥材料既可以是 64 位十六进制原始密钥（`config init` 生成），也可以是任意口令（经 scrypt 派生）。
+
+```bash
+ssh-mcp-server --config-file ~/.ssh-mcp-server.enc --config-key ~/.ssh-mcp-server.key
+```
+
 ### ⏱️ 命令执行超时
 
 `execute-command` 工具支持超时选项，防止命令无限期挂起：
