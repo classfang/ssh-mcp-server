@@ -63,9 +63,16 @@ digraph ssh_mcp_helper {
 | Cursor | `~/.cursor/mcp.json` |
 | Cline / Continue / 其他 | 让用户提供具体路径 |
 
-### Step 2：单台 vs 多台（AskUserQuestion 二选一）
+### Step 2：单台 vs 多台（AskUserQuestion 三选一）
 - **单台**：直接使用命令行参数（`--host` 等）
-- **多台**：生成 `ssh-config.json` 并使用 `--config-file`
+- **多台（明文 JSON）**：生成 `ssh-config.json` 并使用 `--config-file`
+- **多台（加密存储）**：使用 `config` 子命令维护加密存储 `store.enc`，磁盘上不落明文凭据（含密码时**优先推荐**）
+
+#### 多台·加密存储流程
+1. 初始化（一次性）：`ssh-mcp-server config init --file <store.enc>`，密钥文件默认生成在 `~/.ssh-mcp-server.key`
+2. 逐台添加：`ssh-mcp-server config add --file <store.enc> --name <名称> --host <主机> --username <用户> [--password ...]`（省略 `--password` 时交互输入；`--force` 覆盖同名）；已有明文 JSON 可用 `config import --in <plain.json> --file <store.enc>` 一次性迁移
+3. 检查：`ssh-mcp-server config list --file <store.enc>`（默认脱敏，`--show-secrets` 显示明文）
+4. 启动参数与明文完全一致（`--config-file <store.enc>`），密钥来源按优先级：`--config-key <keyfile|literal>` > 环境变量 `SSH_MCP_CONFIG_KEY` > `~/.ssh-mcp-server.key`
 
 ### Step 3：选择认证方式（AskUserQuestion 多选一）
 - `password` — 账号 + 密码
@@ -98,6 +105,7 @@ digraph ssh_mcp_helper {
 - http：客户端片段使用 `url`；有令牌时加上 `headers.Authorization`。另外单独给出启动进程的命令，令牌放在环境变量 `SSH_MCP_HTTP_TOKEN` 中
 - **每个命令行参数与值必须是 args 数组中独立的两个元素**，绝不能写成 `"--host 192.168.1.1"`
 - 多连接场景：把每个连接写入 `ssh-config.json`（数组或对象格式皆可）。stdio 的客户端配置里放 `--config-file <绝对路径>`；http 则把该参数放进单独的启动命令
+- 加密存储场景：客户端配置里放 `--config-file <store.enc 绝对路径>`，密钥用 `--config-key <密钥文件绝对路径>` 或在 mcpServers 片段的 `env` 字段里设 `SSH_MCP_CONFIG_KEY`（**不要**把密钥字面量写进命令行——会留在 shell 历史与进程列表里）
 
 ### Step 7：合并写入配置
 - 先用 Read 读取目标 JSON 配置文件
@@ -119,6 +127,7 @@ digraph ssh_mcp_helper {
 | SOCKS 代理 | `--socksProxy socks://user:pwd@host:port` |
 | 堡垒机 / 跳板机 | `--transport-mode shell --shell-ready-timeout 15000` |
 | 多连接 | `--config-file /abs/path/ssh-config.json` |
+| 多连接（加密存储） | `config init/add` 维护 `store.enc`，启动 `--config-file <store.enc> --config-key <keyfile>`（或环境变量 `SSH_MCP_CONFIG_KEY`） |
 | 2FA / MFA | `--try-keyboard`（搭配密码 + 私钥） |
 | 命令白名单 | `--whitelist "^ls(?: [A-Za-z0-9_./-]+)*$,^cat [A-Za-z0-9_./-]+$"` |
 | 命令黑名单 | `--blacklist "^rm .*,^shutdown.*"` |
@@ -134,6 +143,9 @@ digraph ssh_mcp_helper {
 - ❌ 直接覆盖用户既有 `mcpServers` 中的同名 key → 必须先读后合并，覆盖前显式确认
 - ❌ 直连生产环境却未配置 `--whitelist` / `--blacklist` → 必须主动提醒安全风险
 - ❌ 把私钥内容粘进配置 → 配置里应填**私钥文件路径**，凭据留在本地
+- ❌ 连接带密码却仍写明文 `ssh-config.json` → ✅ 优先用加密存储（`config init/add/import`），磁盘不落明文凭据
+- ❌ 密钥字面量直接放 `--config-key` 命令行 → ✅ 用密钥文件路径或 `SSH_MCP_CONFIG_KEY` 环境变量，避免进 shell 历史与进程列表
+- ❌ 用本地 tarball 当 npx 包规格时漏掉 `file:` 前缀 → ✅ 写成 `npx -y file:D:/path/pkg.tgz`，否则不会被当作包解析
 
 ## 输出示例
 
@@ -183,6 +195,22 @@ HTTP 接入时，进程单独启动，客户端只保存 URL：
     "ssh-mcp-server": {
       "command": "npx",
       "args": ["-y", "@fangjunjie/ssh-mcp-server", "--config-file", "/abs/path/ssh-config.json"]
+    }
+  }
+}
+```
+
+加密存储场景（凭据不落盘）+ 密钥走环境变量：
+
+```json
+{
+  "mcpServers": {
+    "ssh-mcp-server": {
+      "command": "npx",
+      "args": ["-y", "@fangjunjie/ssh-mcp-server", "--config-file", "/abs/path/store.enc"],
+      "env": {
+        "SSH_MCP_CONFIG_KEY": "/abs/path/.ssh-mcp-server.key 的内容或口令"
+      }
     }
   }
 }
