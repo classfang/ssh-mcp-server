@@ -283,15 +283,28 @@ export async function runConfigCli(argv: string[]): Promise<number> {
       return 0;
     }
     for (const entry of entries) {
-      const secrets = values["show-secrets"]
-        ? `password=${entry.password === undefined ? "-" : String(entry.password)}`
-        : `password=${maskValue(entry.password)}`;
-      console.log(
-        `${entry.name}  ${entry.host}:${entry.port}  ${entry.username}  ` +
-          `${secrets}` +
-          `${entry.privateKey ? `  privateKey=${entry.privateKey}` : ""}` +
-          `${entry.agent ? `  agent=${entry.agent}` : ""}`
+      const showSecrets = values["show-secrets"] === true;
+      const parts: string[] = [entry.name, `${entry.host}:${entry.port}`, entry.username];
+      parts.push(
+        `password=${
+          showSecrets
+            ? entry.password === undefined
+              ? "-"
+              : String(entry.password)
+            : maskValue(entry.password)
+        }`
       );
+      // 私钥路径、口令与 agent 同样属于敏感信息,默认只显示存在性,--show-secrets 才显示内容
+      if (entry.privateKey !== undefined) {
+        parts.push(`privateKey=${showSecrets ? String(entry.privateKey) : "******"}`);
+      }
+      if (entry.passphrase !== undefined) {
+        parts.push(`passphrase=${showSecrets ? String(entry.passphrase) : "******"}`);
+      }
+      if (entry.agent !== undefined) {
+        parts.push(`agent=${showSecrets ? String(entry.agent) : "******"}`);
+      }
+      console.log(parts.join("  "));
     }
     return 0;
   }
